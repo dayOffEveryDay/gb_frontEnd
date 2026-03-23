@@ -1,106 +1,65 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import gbcLogo from './assets/gbcLogo.png';
-import './LoginPage.css'; // 稍後創建此 CSS 文件
+import './LoginPage.css';
+import {
+  getFrontendBaseUrl,
+  LINE_LOGIN_SUCCESS_MESSAGE,
+  openLineLoginPopup,
+} from './api';
 
-// 從環境變數讀取設定
-const FRONTEND_BASE_URL = import.meta.env.VITE_APP_FRONTEND_BASE_URL;
-const BACKEND_API_BASE_URL = import.meta.env.VITE_APP_BACKEND_API_BASE_URL;
-
-const LoginPage = () => {
+// 獨立登入頁，主要提供 popup 版 LINE OAuth 入口。
+function LoginPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
 
-  // Line 登入的回調處理
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state'); // Line 要求的 state 參數
+    // 接收 callback popup 回傳的登入成功訊息，成功後回首頁。
+    const handleLineLoginMessage = (event) => {
+      if (event.origin !== getFrontendBaseUrl()) {
+        return;
+      }
 
-    if (code) {
-      setLoading(true);
-      setError(null);
+      if (event.data?.type !== LINE_LOGIN_SUCCESS_MESSAGE) {
+        return;
+      }
 
-      const redirectUri = `${FRONTEND_BASE_URL}/login/callback`;
+      setLoading(false);
+      navigate('/', { replace: true });
+    };
 
-      fetch(`${BACKEND_API_BASE_URL}/api/v1/auth/line`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ code, redirectUri }),
-      })
-        .then(response => response.json())
-        .then(data => {
-          if (data.token) {
-            localStorage.setItem('jwt_token', data.token);
-            // 根據後端響應判斷是否為新用戶，可能需要引導至個人資料設定頁
-            if (data.isNewUser) {
-              // 導向設定個人資料頁面
-              console.log('新用戶，導向個人資料設定');
-            }
-            navigate('/home'); // 登入成功跳轉到首頁
-          } else {
-            setError(data.message || 'Line 登入失敗');
-          }
-        })
-        .catch(err => {
-          console.error('Line 登入請求錯誤:', err);
-          setError('網路錯誤或伺服器無回應');
-        })
-        .finally(() => {
-          setLoading(false);
-        });
-    }
+    window.addEventListener('message', handleLineLoginMessage);
+    return () => window.removeEventListener('message', handleLineLoginMessage);
   }, [navigate]);
 
-  // 開發者後門登入
-  const handleDevLogin = async () => {
+  // 開啟 LINE popup，授權流程與主頁登入 modal 共用同一套機制。
+  const handleLineLogin = () => {
+    setError('');
     setLoading(true);
-    setError(null);
+
     try {
-      const response = await fetch(`${BACKEND_API_BASE_URL}/api/v1/auth/dev-login?userId=1`); // 預設使用 userId=1
-      const data = await response.json();
-      if (data.token) {
-        localStorage.setItem('jwt_token', data.token);
-        navigate('/home'); // 登入成功跳轉到首頁
-      } else {
-        setError(data.message || '開發者登入失敗');
-      }
-    } catch (err) {
-      console.error('開發者登入請求錯誤:', err);
-      setError('網路錯誤或伺服器無回應');
-    } finally {
+      openLineLoginPopup();
+    } catch (requestError) {
+      setError(requestError.message);
       setLoading(false);
     }
-  };
-
-  // 導向 Line 登入的處理函式
-  const handleLineLogin = () => {
-    const lineAuthUrl = `https://access.line.me/oauth2/v2.1/authorize?response_type=code&client_id=YOUR_LINE_CLIENT_ID&redirect_uri=${FRONTEND_BASE_URL}/login/callback&state=YOUR_RANDOM_STATE&scope=profile%20openid`;
-    window.location.href = lineAuthUrl;
   };
 
   return (
     <div className="login-page-container">
       <img src={gbcLogo} alt="Good Buy Costco Logo" className="login-logo" />
-      <h1>歡迎來到好市多合購網</h1>
-      {loading && <p>載入中...</p>}
+      <h1>Good Buy Costco 登入</h1>
+      {loading && <p>LINE 登入視窗已開啟，請在彈出視窗完成授權。</p>}
       {error && <p className="error-message">{error}</p>}
       <div className="login-buttons">
         <button className="line-login-button" onClick={handleLineLogin} disabled={loading}>
-          使用 Line 登入
-        </button>
-        <button className="dev-login-button" onClick={handleDevLogin} disabled={loading}>
-          開發者登入 (UserId=1)
+          使用 LINE 登入
         </button>
       </div>
-      <p className="note">
-        首次登入或新用戶將會引導至個人資料設定頁面。
-      </p>
+      <p className="note">授權完成後，popup 會自動把 code 送到後端換 JWT，主頁不會跳到 callback 頁。</p>
     </div>
   );
-};
+}
 
 export default LoginPage;
