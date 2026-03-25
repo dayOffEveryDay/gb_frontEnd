@@ -17,6 +17,10 @@ function CreateCampaignModal({
     return null;
   }
 
+  const isInstantCampaign = campaignForm.scenarioType === 'INSTANT';
+  const showExpirePresets = isInstantCampaign;
+  const showExpireCustomInput = !showExpirePresets || campaignForm.expirePreset === 'custom';
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="login-modal create-campaign-modal" onClick={(event) => event.stopPropagation()}>
@@ -130,19 +134,21 @@ function CreateCampaignModal({
 
           <label className="profile-field">
             <span>{labels.expireTime}</span>
-            <div className="preset-row">
-              {expirePresetOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={campaignForm.expirePreset === option.value ? 'preset-button active' : 'preset-button'}
-                  onClick={() => setCampaignForm((current) => ({ ...current, expirePreset: option.value }))}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            {campaignForm.expirePreset === 'custom' && (
+            {showExpirePresets && (
+              <div className="preset-row">
+                {expirePresetOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={campaignForm.expirePreset === option.value ? 'preset-button active' : 'preset-button'}
+                    onClick={() => setCampaignForm((current) => ({ ...current, expirePreset: option.value }))}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {showExpireCustomInput && (
               <input
                 type="datetime-local"
                 required
@@ -156,7 +162,8 @@ function CreateCampaignModal({
             <span>{labels.meetupDateTime}</span>
             <input
               type="datetime-local"
-              required
+              disabled={!isInstantCampaign}
+              required={isInstantCampaign}
               value={campaignForm.meetupTime}
               onChange={(event) => setCampaignForm((current) => ({ ...current, meetupTime: event.target.value }))}
             />

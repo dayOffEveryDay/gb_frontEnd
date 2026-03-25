@@ -236,6 +236,14 @@ export function createCampaign(payload, token) {
 }
 
 // 更新目前登入者的個人資料設定。
+export function joinCampaign(campaignId, payload, token) {
+  return request(`/api/v1/campaigns/${campaignId}/join`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
 export function updateCurrentUserProfile(payload, token) {
   return request('/api/v1/users/me', {
     method: 'PUT',

@@ -74,10 +74,15 @@ export function formatCountdown(value, now = Date.now()) {
     return '已截止';
   }
 
-  const totalSeconds = Math.floor(diff / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
+  const totalSeconds = Math.ceil(diff / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
+
+  if (days > 0) {
+    return `${days}日${hours}時${minutes}分${seconds}秒`;
+  }
 
   if (hours > 0) {
     return `${hours}時${minutes}分${seconds}秒`;
@@ -137,7 +142,7 @@ export function normalizeUser(user) {
 
   return {
     id: user.id ?? null,
-    displayName: user.displayName ?? '未命名使用者',
+    displayName: user.displayName ?? LABELS.noValue,
     profileImageUrl: user.profileImageUrl ?? user.profile_image_url ?? '',
     hasCostcoMembership: Boolean(user.hasCostcoMembership ?? user.has_costco_membership),
   };
@@ -160,7 +165,7 @@ export function mapCampaign(campaign, index) {
   return {
     ...campaign,
     scenarioType: campaign.scenarioType ?? campaign.scenario_type ?? 'SCHEDULED',
-    itemName: campaign.itemName ?? campaign.item_name ?? '團購',
+    itemName: campaign.itemName ?? campaign.item_name ?? LABELS.noValue,
     availableQuantity:
       campaign.availableQuantity ?? campaign.available_quantity ?? campaign.totalQuantity ?? campaign.total_quantity ?? 0,
     pricePerUnit: campaign.pricePerUnit ?? campaign.price_per_unit ?? 0,
@@ -170,7 +175,7 @@ export function mapCampaign(campaign, index) {
     meetupTime: campaign.meetupTime ?? campaign.meetup_time ?? '',
     expireTime: campaign.expireTime ?? campaign.expire_time ?? '',
     host: normalizeHost(campaign.host),
-    image: resolveCampaignImageUrl(campaign) || createFallbackImage(campaign.itemName ?? '團購', 18 + index * 19),
+    image: resolveCampaignImageUrl(campaign) || createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19),
   };
 }
 
@@ -189,10 +194,26 @@ export function formatLocalInputValue(value) {
   ].join('');
 }
 
+export function addMinutes(value, minutes) {
+  return new Date(value.getTime() + minutes * 60 * 1000);
+}
+
+const HODUO_BUSINESS_START_MINUTES = 10 * 60;
+const HODUO_BUSINESS_END_MINUTES = 21 * 60;
+
+export function isWithinHoduoBusinessHours(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const currentMinutes = date.getHours() * 60 + date.getMinutes();
+  return currentMinutes >= HODUO_BUSINESS_START_MINUTES && currentMinutes < HODUO_BUSINESS_END_MINUTES;
+}
+
 export function getInitialCampaignForm() {
   const now = new Date();
-  const meetup = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  const expire = new Date(now.getTime() + 10 * 60 * 1000);
+  const expire = addMinutes(now, 10);
 
   return {
     storeId: '',
@@ -203,9 +224,9 @@ export function getInitialCampaignForm() {
     pricePerUnit: '',
     totalQuantity: '',
     meetupLocation: '',
-    expirePreset: '10m',
+    expirePreset: 'custom',
     expireTime: formatLocalInputValue(expire),
-    meetupTime: formatLocalInputValue(meetup),
+    meetupTime: '',
   };
 }
 
@@ -226,18 +247,35 @@ export function formatLocalDateTime(value) {
   ].join('');
 }
 
-export function resolveExpireTime(form) {
+export function resolveExpireDate(form, baseTime = Date.now()) {
   const preset = EXPIRE_PRESET_OPTIONS.find((option) => option.value === form.expirePreset);
   if (preset?.minutes) {
-    return formatLocalDateTime(new Date(Date.now() + preset.minutes * 60 * 1000));
+    return addMinutes(new Date(baseTime), preset.minutes);
   }
 
   if (!form.expireTime) {
+    return null;
+  }
+
+  return parseLocalDateTime(form.expireTime);
+}
+
+export function resolveExpireTime(form) {
+  const resolvedExpireDate = resolveExpireDate(form);
+  return resolvedExpireDate ? formatLocalDateTime(resolvedExpireDate) : '';
+}
+
+export function getSuggestedMeetupTime(form, baseTime = Date.now()) {
+  if (form.scenarioType !== 'INSTANT') {
     return '';
   }
 
-  const customDate = new Date(form.expireTime);
-  return Number.isNaN(customDate.getTime()) ? '' : formatLocalDateTime(customDate);
+  const expireDate = resolveExpireDate(form, baseTime);
+  if (!expireDate) {
+    return '';
+  }
+
+  return formatLocalInputValue(addMinutes(expireDate, 15));
 }
 
 export function formatDateTime(value) {

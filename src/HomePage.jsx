@@ -9,6 +9,7 @@ import {
   getFrontendBaseUrl,
   getStoredToken,
   getStoredUser,
+  joinCampaign,
   LINE_LOGIN_SUCCESS_MESSAGE,
   openLineLoginPopup,
   setStoredAuth,
@@ -18,9 +19,11 @@ import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeCo
 import {
   formatCountdown,
   formatDateTime,
+  getSuggestedMeetupTime,
   getInitialCampaignForm,
   getScenarioLabel,
   getTypeClass,
+  isWithinHoduoBusinessHours,
   mapCampaign,
   normalizeUser,
   resolveExpireTime,
@@ -31,9 +34,19 @@ import ProfileModal from './ProfileModal';
 import NotificationsModal from './NotificationsModal';
 import CreateCampaignModal from './CreateCampaignModal';
 import CreateCampaignSuccessModal from './CreateCampaignSuccessModal';
+import JoinCampaignModal from './JoinCampaignModal';
 import DealCard from './DealCard';
 
 function HomePage() {
+  const uiLabels = {
+    ...LABELS,
+    joinCampaign: '\u52a0\u5165\u5718\u8cfc',
+    purchaseQuantity: '\u8a8d\u8cfc\u6578\u91cf',
+    confirmJoinCampaign: '\u78ba\u8a8d\u52a0\u5165',
+    submittingJoinCampaign: '\u9001\u51fa\u4e2d...',
+    soldOut: '\u5df2\u984d\u6eff',
+  };
+
   const [stores, setStores] = useState([]);
   const [categories, setCategories] = useState([]);
   const [referenceError, setReferenceError] = useState('');
@@ -68,6 +81,10 @@ function HomePage() {
   const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
   const [createCampaignError, setCreateCampaignError] = useState('');
   const [createdCampaignSummary, setCreatedCampaignSummary] = useState(null);
+  const [selectedDealToJoin, setSelectedDealToJoin] = useState(null);
+  const [purchaseQuantity, setPurchaseQuantity] = useState('1');
+  const [purchaseError, setPurchaseError] = useState('');
+  const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
   const [referenceRefreshKey, setReferenceRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -86,6 +103,7 @@ function HomePage() {
   const createSummaryTimerRef = useRef(null);
   const pullStartYRef = useRef(null);
   const canPullRef = useRef(false);
+  const autoMeetupTimeRef = useRef('');
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -116,6 +134,39 @@ function HomePage() {
       }
     };
   }, [createdCampaignSummary]);
+
+  useEffect(() => {
+    setCampaignForm((current) => {
+      const nextExpirePreset = current.scenarioType === 'INSTANT' ? current.expirePreset || '10m' : 'custom';
+      const nextSuggestedMeetupTime = getSuggestedMeetupTime({ ...current, expirePreset: nextExpirePreset });
+
+      if (current.scenarioType !== 'INSTANT') {
+        autoMeetupTimeRef.current = '';
+        if (current.expirePreset === 'custom' && current.meetupTime === '') {
+          return current;
+        }
+
+        return {
+          ...current,
+          expirePreset: 'custom',
+          meetupTime: '',
+        };
+      }
+
+      const shouldSyncMeetupTime = !current.meetupTime || current.meetupTime === autoMeetupTimeRef.current;
+      autoMeetupTimeRef.current = nextSuggestedMeetupTime;
+
+      if (current.expirePreset === nextExpirePreset && (!shouldSyncMeetupTime || current.meetupTime === nextSuggestedMeetupTime)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        expirePreset: nextExpirePreset,
+        meetupTime: shouldSyncMeetupTime ? nextSuggestedMeetupTime : current.meetupTime,
+      };
+    });
+  }, [campaignForm.scenarioType, campaignForm.expirePreset, campaignForm.expireTime]);
 
   useEffect(() => {
     const handleLineLoginMessage = (event) => {
@@ -356,6 +407,7 @@ function HomePage() {
     }
 
     setCreateCampaignError('');
+    autoMeetupTimeRef.current = '';
     setCampaignForm((current) => ({
       ...getInitialCampaignForm(),
       storeId: current.storeId || stores[0]?.id?.toString() || '',
@@ -422,6 +474,13 @@ function HomePage() {
       return;
     }
 
+    if (campaignForm.scenarioType === 'INSTANT' && !isWithinHoduoBusinessHours()) {
+      const message = '\u73fe\u5728\u975e\u597d\u591a\u71df\u696d\u6642\u9593\uff0c\u8acb\u6539\u9810\u8cfc\u6a21\u5f0f\u3002';
+      setCreateCampaignError(message);
+      window.alert(message);
+      return;
+    }
+
     const requiredChecks = [
       ['店面', campaignForm.storeId],
       ['類別', campaignForm.categoryId],
@@ -434,6 +493,10 @@ function HomePage() {
       ['面交時間', campaignForm.meetupTime],
       ['面交地點', campaignForm.meetupLocation.trim()],
     ];
+
+    if (campaignForm.scenarioType !== 'INSTANT') {
+      requiredChecks[8][1] = 'ok';
+    }
 
     const missingField = requiredChecks.find(([, value]) => !value);
     if (missingField) {
@@ -488,6 +551,82 @@ function HomePage() {
       setCreateCampaignError(error.message);
     } finally {
       setIsCreatingCampaign(false);
+    }
+  };
+
+  const handleOpenJoinCampaign = (deal) => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setSelectedDealToJoin(deal);
+    setPurchaseQuantity(deal.availableQuantity > 0 ? '1' : '0');
+    setPurchaseError('');
+  };
+
+  const handleCloseJoinCampaign = () => {
+    if (isSubmittingPurchase) {
+      return;
+    }
+
+    setSelectedDealToJoin(null);
+    setPurchaseQuantity('1');
+    setPurchaseError('');
+  };
+
+  const handleSubmitJoinCampaign = async () => {
+    if (!selectedDealToJoin) {
+      return;
+    }
+
+    const normalizedQuantity = Number(purchaseQuantity);
+    if (!Number.isInteger(normalizedQuantity)) {
+      setPurchaseError('\u8acb\u8f38\u5165\u6b63\u6574\u6578\u7684\u8a8d\u8cfc\u6578\u91cf');
+      return;
+    }
+
+    if (normalizedQuantity <= 0) {
+      setPurchaseError('\u8a8d\u8cfc\u6578\u91cf\u4e0d\u80fd\u70ba 0 \u6216\u8ca0\u6578');
+      return;
+    }
+
+    if (normalizedQuantity > selectedDealToJoin.availableQuantity) {
+      setPurchaseError('\u8a8d\u8cfc\u6578\u91cf\u4e0d\u80fd\u8d85\u904e\u5f85\u8a8d\u8cfc\u6578\u91cf');
+      return;
+    }
+
+    setIsSubmittingPurchase(true);
+    setPurchaseError('');
+
+    try {
+      const joinResponse = await joinCampaign(
+        selectedDealToJoin.id,
+        { quantity: normalizedQuantity },
+        token
+      );
+
+      setCampaigns((current) =>
+        current.map((campaign) =>
+          campaign.id === selectedDealToJoin.id
+            ? {
+                ...campaign,
+                availableQuantity:
+                  joinResponse?.availableQuantity ??
+                  joinResponse?.available_quantity ??
+                  campaign.availableQuantity - normalizedQuantity,
+              }
+            : campaign
+        )
+      );
+      setSelectedDealToJoin(null);
+      setPurchaseQuantity('1');
+      setPurchaseError('');
+      window.alert(`\u5df2\u52a0\u5165\u5718\u8cfc\uff0c\u8a8d\u8cfc ${normalizedQuantity} \u4ef6`);
+    } catch (error) {
+      setPurchaseError(error.message);
+    } finally {
+      setIsSubmittingPurchase(false);
     }
   };
 
@@ -568,6 +707,18 @@ function HomePage() {
         onClose={() => setCreatedCampaignSummary(null)}
       />
 
+      <JoinCampaignModal
+        isOpen={Boolean(selectedDealToJoin)}
+        labels={uiLabels}
+        selectedDeal={selectedDealToJoin}
+        purchaseQuantity={purchaseQuantity}
+        purchaseError={purchaseError}
+        isSubmitting={isSubmittingPurchase}
+        onClose={handleCloseJoinCampaign}
+        onChangeQuantity={setPurchaseQuantity}
+        onSubmit={handleSubmitJoinCampaign}
+      />
+
       <main className="content">
         <section className="type-switch">
           {TYPE_OPTIONS.map((option) => (
@@ -614,12 +765,13 @@ function HomePage() {
           {campaigns.map((deal) => (
             <DealCard
               key={deal.id}
-              labels={LABELS}
+              labels={uiLabels}
               deal={deal}
               countdownNow={countdownNow}
               formatCountdown={formatCountdown}
               getScenarioLabel={getScenarioLabel}
               getTypeClass={getTypeClass}
+              onJoin={handleOpenJoinCampaign}
             />
           ))}
         </section>

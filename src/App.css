@@ -190,6 +190,10 @@
   overflow: auto;
 }
 
+.join-campaign-modal {
+  width: min(420px, 100%);
+}
+
 .modal-close {
   margin-left: auto;
   display: block;
@@ -590,6 +594,28 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   row-gap: 10px;
+}
+
+.deal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.join-campaign-button {
+  min-width: 120px;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 14px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.join-campaign-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .footer-item {

@@ -1,6 +1,6 @@
 import { AvatarIcon } from './Icons';
 
-function DealCard({ labels, deal, countdownNow, formatCountdown, getScenarioLabel, getTypeClass }) {
+function DealCard({ labels, deal, countdownNow, formatCountdown, getScenarioLabel, getTypeClass, onJoin }) {
   return (
     <article className="deal-card">
       <div className="deal-upper">
@@ -54,6 +54,17 @@ function DealCard({ labels, deal, countdownNow, formatCountdown, getScenarioLabe
           <span className="footer-label">{labels.meetupPlace}</span>
           <strong>{deal.meetupLocation || labels.noValue}</strong>
         </div>
+      </div>
+
+      <div className="deal-actions">
+        <button
+          type="button"
+          className="join-campaign-button"
+          onClick={() => onJoin(deal)}
+          disabled={deal.availableQuantity <= 0}
+        >
+          {deal.availableQuantity <= 0 ? labels.soldOut : labels.joinCampaign}
+        </button>
       </div>
     </article>
   );
