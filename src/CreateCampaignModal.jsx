@@ -1,3 +1,5 @@
+import { getSuggestedMeetupTime } from './homeUtils';
+
 function CreateCampaignModal({
   labels,
   isOpen,
@@ -17,9 +19,36 @@ function CreateCampaignModal({
     return null;
   }
 
-  const isInstantCampaign = campaignForm.scenarioType === 'INSTANT';
-  const showExpirePresets = isInstantCampaign;
-  const showExpireCustomInput = !showExpirePresets || campaignForm.expirePreset === 'custom';
+  const showExpirePresets = true;
+  const showExpireCustomInput = campaignForm.expirePreset === 'custom';
+
+  const syncExpirePreset = (value) => {
+    setCampaignForm((current) => {
+      const nextForm = {
+        ...current,
+        expirePreset: value,
+      };
+
+      return {
+        ...nextForm,
+        meetupTime: getSuggestedMeetupTime(nextForm),
+      };
+    });
+  };
+
+  const syncExpireTime = (value) => {
+    setCampaignForm((current) => {
+      const nextForm = {
+        ...current,
+        expireTime: value,
+      };
+
+      return {
+        ...nextForm,
+        meetupTime: getSuggestedMeetupTime(nextForm),
+      };
+    });
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -141,7 +170,7 @@ function CreateCampaignModal({
                     key={option.value}
                     type="button"
                     className={campaignForm.expirePreset === option.value ? 'preset-button active' : 'preset-button'}
-                    onClick={() => setCampaignForm((current) => ({ ...current, expirePreset: option.value }))}
+                    onClick={() => syncExpirePreset(option.value)}
                   >
                     {option.label}
                   </button>
@@ -153,7 +182,7 @@ function CreateCampaignModal({
                 type="datetime-local"
                 required
                 value={campaignForm.expireTime}
-                onChange={(event) => setCampaignForm((current) => ({ ...current, expireTime: event.target.value }))}
+                onChange={(event) => syncExpireTime(event.target.value)}
               />
             )}
           </label>

@@ -9,15 +9,17 @@ function DealCard({
   getScenarioLabel,
   getTypeClass,
   onJoin,
+  onOpenGallery,
   showJoinAction = true,
 }) {
   return (
     <article className="deal-card">
       <div className="deal-upper">
-        <div className="deal-image-wrap">
+        <button type="button" className="deal-image-wrap deal-image-button" onClick={() => onOpenGallery(deal, 0)}>
           <img src={deal.image} alt={deal.itemName} className="deal-image" />
           <span className="countdown-badge">倒數: {formatCountdown(deal.expireTime ?? deal.meetupTime, countdownNow)}</span>
-        </div>
+          {deal.imageUrls?.length > 1 && <span className="deal-image-count">{deal.imageUrls.length} 張</span>}
+        </button>
 
         <div className="deal-body">
           <div className="deal-title-row">
@@ -66,7 +68,7 @@ function DealCard({
             <strong>{deal.meetupLocation || labels.noValue}</strong>
             {!showJoinAction && (
               <div className="deal-expire-inline">
-                <span className="footer-label">到期時間</span>
+                <span className="footer-label">截止時間</span>
                 <strong>{formatDateTime(deal.expireTime)}</strong>
               </div>
             )}

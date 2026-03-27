@@ -62,13 +62,14 @@ export const LABELS = {
 export const TYPE_OPTIONS = [
   { value: 'INSTANT', label: LABELS.instant },
   { value: 'SCHEDULED', label: LABELS.preorder },
-  { value: 'MINE', label: LABELS.mine },
 ];
 
 export const MY_CAMPAIGN_OPTIONS = [
-  { value: 'ALL', label: LABELS.all },
-  { value: 'HOSTED', label: LABELS.myHosted },
-  { value: 'JOINED', label: LABELS.myJoined },
+  { value: 'ALL', label: '全部' },
+  { value: 'HOSTED', label: '我的團購' },
+  { value: 'JOINED', label: '我參加的' },
+  { value: 'COMPLETED', label: '已完成' },
+  { value: 'CANCELLED', label: '已取消' },
 ];
 
 export const EXPIRE_PRESET_OPTIONS = [

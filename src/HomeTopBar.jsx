@@ -13,10 +13,10 @@ function HomeTopBar({
   isRefreshing,
 }) {
   return (
-    <header className="topbar">
+    <header className={token ? 'topbar' : 'topbar guest-topbar'}>
       <button
         type="button"
-        className={token ? 'profile-trigger icon-button' : 'icon-chip profile-trigger'}
+        className={token ? 'profile-trigger icon-button' : 'icon-chip profile-trigger login-chip'}
         onClick={onOpenProfile}
         aria-label={token ? 'profile' : 'login'}
       >
@@ -27,7 +27,7 @@ function HomeTopBar({
             <AvatarIcon />
           )}
         </span>
-        {!token && <span>{labels.login}</span>}
+        {!token && <span className="login-chip-label">{labels.login}</span>}
       </button>
 
       <div className="store-selector">

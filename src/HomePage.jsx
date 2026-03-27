@@ -40,8 +40,58 @@ import CreateCampaignModal from './CreateCampaignModal';
 import CreateCampaignSuccessModal from './CreateCampaignSuccessModal';
 import JoinCampaignModal from './JoinCampaignModal';
 import DealCard from './DealCard';
+import ImageGalleryModal from './ImageGalleryModal';
+
+function getCampaignLifecycle(rawCampaign) {
+  const statusSource = [
+    rawCampaign?.status,
+    rawCampaign?.campaignStatus,
+    rawCampaign?.campaign_status,
+    rawCampaign?.state,
+  ]
+    .find(Boolean)
+    ?.toString()
+    .toUpperCase();
+
+  if (statusSource?.includes('CANCEL')) {
+    return 'CANCELLED';
+  }
+
+  if (statusSource?.includes('COMPLETE') || statusSource?.includes('FINISH') || statusSource?.includes('ENDED')) {
+    return 'COMPLETED';
+  }
+
+  const expireValue = rawCampaign?.expireTime ?? rawCampaign?.expire_time ?? rawCampaign?.meetupTime ?? rawCampaign?.meetup_time;
+  const expireDate = parseLocalDateTime(expireValue);
+  if (expireDate && expireDate.getTime() <= Date.now()) {
+    return 'COMPLETED';
+  }
+
+  return 'ACTIVE';
+}
 
 function HomePage() {
+  const swipeTabs = [...TYPE_OPTIONS.map((option) => option.value), 'MINE'];
+  const localizedExpirePresetOptions = EXPIRE_PRESET_OPTIONS.map((option) => {
+    if (option.value === '10m') {
+      return { ...option, label: '10 分鐘後' };
+    }
+
+    if (option.value === '20m') {
+      return { ...option, label: '20 分鐘後' };
+    }
+
+    if (option.value === '30m') {
+      return { ...option, label: '30 分鐘後' };
+    }
+
+    if (option.value === 'custom') {
+      return { ...option, label: '自訂' };
+    }
+
+    return option;
+  });
+
   const uiLabels = {
     ...LABELS,
     joinCampaign: '\u52a0\u5165\u5718\u8cfc',
@@ -90,6 +140,12 @@ function HomePage() {
   const [purchaseQuantity, setPurchaseQuantity] = useState('1');
   const [purchaseError, setPurchaseError] = useState('');
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+  const [galleryState, setGalleryState] = useState({
+    isOpen: false,
+    title: '',
+    images: [],
+    activeIndex: 0,
+  });
   const [referenceRefreshKey, setReferenceRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
@@ -144,20 +200,8 @@ function HomePage() {
 
   useEffect(() => {
     setCampaignForm((current) => {
-      const nextExpirePreset = current.scenarioType === 'INSTANT' ? current.expirePreset || '10m' : 'custom';
+      const nextExpirePreset = current.expirePreset || '10m';
       const nextSuggestedMeetupTime = getSuggestedMeetupTime({ ...current, expirePreset: nextExpirePreset });
-
-      if (current.scenarioType !== 'INSTANT') {
-        autoMeetupTimeRef.current = '';
-        if (current.expirePreset === 'custom') {
-          return current;
-        }
-
-        return {
-          ...current,
-          expirePreset: 'custom',
-        };
-      }
 
       const shouldSyncMeetupTime = !current.meetupTime || current.meetupTime === autoMeetupTimeRef.current;
       autoMeetupTimeRef.current = nextSuggestedMeetupTime;
@@ -289,6 +333,12 @@ function HomePage() {
             });
 
             items = Array.from(campaignMap.values());
+
+            if (activeMyCampaignFilter === 'COMPLETED') {
+              items = items.filter((campaign) => getCampaignLifecycle(campaign) === 'COMPLETED');
+            } else if (activeMyCampaignFilter === 'CANCELLED') {
+              items = items.filter((campaign) => getCampaignLifecycle(campaign) === 'CANCELLED');
+            }
           }
 
           if (cancelled) {
@@ -314,7 +364,7 @@ function HomePage() {
         }
 
         const items = Array.isArray(data?.content)
-          ? data.content.map(mapCampaign).filter((item) => item.scenarioType === activeType)
+          ? data.content.map(mapCampaign).filter((item) => item.scenarioType === activeType && item.availableQuantity > 0)
           : [];
 
         setCampaigns(items);
@@ -376,7 +426,7 @@ function HomePage() {
             const nextItems = Array.isArray(data?.content)
               ? data.content
                   .map((item, index) => mapCampaign(item, campaigns.length + index))
-                  .filter((item) => item.scenarioType === activeType)
+                  .filter((item) => item.scenarioType === activeType && item.availableQuantity > 0)
               : [];
 
             setCampaigns((current) => [...current, ...nextItems]);
@@ -497,21 +547,31 @@ function HomePage() {
     }
 
     setActiveType((current) => {
-      const currentIndex = TYPE_OPTIONS.findIndex((option) => option.value === current);
+      const currentIndex = swipeTabs.findIndex((value) => value === current);
       if (currentIndex === -1) {
         return current;
       }
 
       const nextIndex =
-        direction === 'left'
-          ? Math.min(currentIndex + 1, TYPE_OPTIONS.length - 1)
-          : Math.max(currentIndex - 1, 0);
+        direction === 'left' ? Math.min(currentIndex + 1, swipeTabs.length - 1) : Math.max(currentIndex - 1, 0);
 
-      return TYPE_OPTIONS[nextIndex]?.value ?? current;
+      return swipeTabs[nextIndex] ?? current;
     });
   };
 
   const handleTouchStart = (event) => {
+    const gestureTarget = event.target;
+    if (
+      gestureTarget instanceof Element &&
+      gestureTarget.closest('.category-strip, .store-selector, .search-box')
+    ) {
+      swipeStartXRef.current = null;
+      pullStartYRef.current = null;
+      gestureLockRef.current = '';
+      canPullRef.current = false;
+      return;
+    }
+
     const touch = event.touches[0];
     swipeStartXRef.current = touch?.clientX ?? null;
     pullStartYRef.current = touch?.clientY ?? null;
@@ -748,8 +808,8 @@ function HomePage() {
         token
       );
 
-      setCampaigns((current) =>
-        current.map((campaign) =>
+      setCampaigns((current) => {
+        const nextCampaigns = current.map((campaign) =>
           campaign.id === selectedDealToJoin.id
             ? {
                 ...campaign,
@@ -759,8 +819,10 @@ function HomePage() {
                   campaign.availableQuantity - normalizedQuantity,
               }
             : campaign
-        )
-      );
+        );
+
+        return activeType === 'MINE' ? nextCampaigns : nextCampaigns.filter((campaign) => campaign.availableQuantity > 0);
+      });
       setSelectedDealToJoin(null);
       setPurchaseQuantity('1');
       setPurchaseError('');
@@ -770,6 +832,46 @@ function HomePage() {
     } finally {
       setIsSubmittingPurchase(false);
     }
+  };
+
+  const handleOpenGallery = (deal, startIndex = 0) => {
+    const images = Array.isArray(deal.imageUrls) && deal.imageUrls.length > 0 ? deal.imageUrls : [deal.image];
+    setGalleryState({
+      isOpen: true,
+      title: deal.itemName,
+      images,
+      activeIndex: Math.min(Math.max(startIndex, 0), images.length - 1),
+    });
+  };
+
+  const handleCloseGallery = () => {
+    setGalleryState((current) => ({
+      ...current,
+      isOpen: false,
+    }));
+  };
+
+  const handleSelectGalleryImage = (nextIndex) => {
+    setGalleryState((current) => ({
+      ...current,
+      activeIndex: nextIndex,
+    }));
+  };
+
+  const handleStepGallery = (direction) => {
+    setGalleryState((current) => {
+      if (!current.images.length) {
+        return current;
+      }
+
+      const step = direction === 'next' ? 1 : -1;
+      const nextIndex = (current.activeIndex + step + current.images.length) % current.images.length;
+
+      return {
+        ...current,
+        activeIndex: nextIndex,
+      };
+    });
   };
 
   return (
@@ -831,7 +933,7 @@ function HomePage() {
         stores={stores}
         categories={categories}
         typeOptions={TYPE_OPTIONS}
-        expirePresetOptions={EXPIRE_PRESET_OPTIONS}
+        expirePresetOptions={localizedExpirePresetOptions}
         campaignForm={campaignForm}
         createCampaignError={createCampaignError}
         isCreatingCampaign={isCreatingCampaign}
@@ -862,19 +964,39 @@ function HomePage() {
         onSubmit={handleSubmitJoinCampaign}
       />
 
+      <ImageGalleryModal
+        isOpen={galleryState.isOpen}
+        title={galleryState.title}
+        images={galleryState.images}
+        activeIndex={galleryState.activeIndex}
+        onClose={handleCloseGallery}
+        onPrev={() => handleStepGallery('prev')}
+        onNext={() => handleStepGallery('next')}
+        onSelect={handleSelectGalleryImage}
+      />
+
       <main className="content">
-        <section className="type-switch">
-          {TYPE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={activeType === option.value ? 'mode-button active' : 'mode-button'}
-              onClick={() => setActiveType(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </section>
+        <div className="type-switch-shell">
+          <section className="type-switch">
+            {TYPE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={activeType === option.value ? 'mode-button active' : 'mode-button'}
+                onClick={() => setActiveType(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </section>
+          <button
+            type="button"
+            className={activeType === 'MINE' ? 'mode-button mine-entry active' : 'mode-button mine-entry'}
+            onClick={() => setActiveType('MINE')}
+          >
+            {LABELS.mine}
+          </button>
+        </div>
 
         <section className="category-strip">
           {activeType === 'MINE' ? (
@@ -931,6 +1053,7 @@ function HomePage() {
               getScenarioLabel={getScenarioLabel}
               getTypeClass={getTypeClass}
               onJoin={handleOpenJoinCampaign}
+              onOpenGallery={handleOpenGallery}
               showJoinAction={activeType !== 'MINE' && deal.host?.id !== user?.id}
             />
           ))}

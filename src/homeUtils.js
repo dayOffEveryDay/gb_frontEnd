@@ -111,6 +111,26 @@ export function resolveCampaignImageUrl(campaign) {
   return new URL(normalizedPath, `${getBackendBaseUrl()}/`).toString();
 }
 
+export function resolveCampaignImageUrls(campaign) {
+  const candidates = [
+    ...(Array.isArray(campaign.imageUrls) ? campaign.imageUrls : []),
+    ...(Array.isArray(campaign.image_urls) ? campaign.image_urls : []),
+    ...(campaign.itemImageUrl ? [campaign.itemImageUrl] : []),
+    ...(campaign.item_image_url ? [campaign.item_image_url] : []),
+  ].filter(Boolean);
+
+  const normalized = candidates.map((candidate) => {
+    if (candidate.startsWith('http://') || candidate.startsWith('https://') || candidate.startsWith('data:')) {
+      return candidate;
+    }
+
+    const normalizedPath = candidate.startsWith('/') ? candidate : `/${candidate}`;
+    return new URL(normalizedPath, `${getBackendBaseUrl()}/`).toString();
+  });
+
+  return Array.from(new Set(normalized));
+}
+
 export function getScenarioLabel(type) {
   if (type === 'INSTANT') {
     return LABELS.instant;
@@ -162,6 +182,9 @@ export function normalizeHost(host) {
 }
 
 export function mapCampaign(campaign, index) {
+  const images = resolveCampaignImageUrls(campaign);
+  const fallbackImage = createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19);
+
   return {
     ...campaign,
     scenarioType: campaign.scenarioType ?? campaign.scenario_type ?? 'SCHEDULED',
@@ -175,7 +198,8 @@ export function mapCampaign(campaign, index) {
     meetupTime: campaign.meetupTime ?? campaign.meetup_time ?? '',
     expireTime: campaign.expireTime ?? campaign.expire_time ?? '',
     host: normalizeHost(campaign.host),
-    image: resolveCampaignImageUrl(campaign) || createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19),
+    imageUrls: images.length > 0 ? images : [fallbackImage],
+    image: images[0] ?? fallbackImage,
   };
 }
 
@@ -214,6 +238,7 @@ export function isWithinHoduoBusinessHours(value = new Date()) {
 export function getInitialCampaignForm() {
   const now = new Date();
   const expire = addMinutes(now, 10);
+  const meetup = addMinutes(expire, 15);
 
   return {
     storeId: '',
@@ -224,9 +249,9 @@ export function getInitialCampaignForm() {
     pricePerUnit: '',
     totalQuantity: '',
     meetupLocation: '',
-    expirePreset: 'custom',
+    expirePreset: '10m',
     expireTime: formatLocalInputValue(expire),
-    meetupTime: '',
+    meetupTime: formatLocalInputValue(meetup),
   };
 }
 
@@ -266,10 +291,6 @@ export function resolveExpireTime(form) {
 }
 
 export function getSuggestedMeetupTime(form, baseTime = Date.now()) {
-  if (form.scenarioType !== 'INSTANT') {
-    return '';
-  }
-
   const expireDate = resolveExpireDate(form, baseTime);
   if (!expireDate) {
     return '';
