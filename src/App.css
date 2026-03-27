@@ -1,6 +1,7 @@
 .app-shell {
   min-height: 100vh;
   padding: 12px 12px 108px;
+  touch-action: pan-y;
 }
 
 .pull-refresh-indicator {
@@ -599,6 +600,22 @@
 .deal-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.place-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.deal-expire-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .join-campaign-button {

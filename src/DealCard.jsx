@@ -1,6 +1,16 @@
 import { AvatarIcon } from './Icons';
 
-function DealCard({ labels, deal, countdownNow, formatCountdown, getScenarioLabel, getTypeClass, onJoin }) {
+function DealCard({
+  labels,
+  deal,
+  countdownNow,
+  formatCountdown,
+  formatDateTime,
+  getScenarioLabel,
+  getTypeClass,
+  onJoin,
+  showJoinAction = true,
+}) {
   return (
     <article className="deal-card">
       <div className="deal-upper">
@@ -52,20 +62,30 @@ function DealCard({ labels, deal, countdownNow, formatCountdown, getScenarioLabe
         </div>
         <div className="footer-item place">
           <span className="footer-label">{labels.meetupPlace}</span>
-          <strong>{deal.meetupLocation || labels.noValue}</strong>
+          <div className="place-meta">
+            <strong>{deal.meetupLocation || labels.noValue}</strong>
+            {!showJoinAction && (
+              <div className="deal-expire-inline">
+                <span className="footer-label">到期時間</span>
+                <strong>{formatDateTime(deal.expireTime)}</strong>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="deal-actions">
-        <button
-          type="button"
-          className="join-campaign-button"
-          onClick={() => onJoin(deal)}
-          disabled={deal.availableQuantity <= 0}
-        >
-          {deal.availableQuantity <= 0 ? labels.soldOut : labels.joinCampaign}
-        </button>
-      </div>
+      {showJoinAction && (
+        <div className="deal-actions">
+          <button
+            type="button"
+            className="join-campaign-button"
+            onClick={() => onJoin(deal)}
+            disabled={deal.availableQuantity <= 0}
+          >
+            {deal.availableQuantity <= 0 ? labels.soldOut : labels.joinCampaign}
+          </button>
+        </div>
+      )}
     </article>
   );
 }

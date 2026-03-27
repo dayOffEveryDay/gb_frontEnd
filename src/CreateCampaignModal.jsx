@@ -162,8 +162,7 @@ function CreateCampaignModal({
             <span>{labels.meetupDateTime}</span>
             <input
               type="datetime-local"
-              disabled={!isInstantCampaign}
-              required={isInstantCampaign}
+              required
               value={campaignForm.meetupTime}
               onChange={(event) => setCampaignForm((current) => ({ ...current, meetupTime: event.target.value }))}
             />

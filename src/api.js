@@ -203,6 +203,20 @@ export function fetchCampaigns(params) {
   return request('/api/v1/campaigns', { query: params });
 }
 
+export function fetchMyHostedCampaigns(params, token) {
+  return request('/api/v1/campaigns/my-hosted', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchMyJoinedCampaigns(params, token) {
+  return request('/api/v1/campaigns/my-joined', {
+    query: params,
+    token,
+  });
+}
+
 // 把 LINE callback code 送到後端，交換 JWT 與使用者資料。
 export function lineLogin(payload) {
   return request('/api/v1/auth/line', {

@@ -5,6 +5,8 @@ import {
   createCampaign,
   fetchCampaigns,
   fetchCategories,
+  fetchMyHostedCampaigns,
+  fetchMyJoinedCampaigns,
   fetchStores,
   getFrontendBaseUrl,
   getStoredToken,
@@ -15,7 +17,7 @@ import {
   setStoredAuth,
   updateCurrentUserProfile,
 } from './api';
-import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
+import { EXPIRE_PRESET_OPTIONS, LABELS, MY_CAMPAIGN_OPTIONS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
 import {
   formatCountdown,
   formatDateTime,
@@ -26,6 +28,8 @@ import {
   isWithinHoduoBusinessHours,
   mapCampaign,
   normalizeUser,
+  parseLocalDateTime,
+  resolveExpireDate,
   resolveExpireTime,
 } from './homeUtils';
 import HomeTopBar from './HomeTopBar';
@@ -53,6 +57,7 @@ function HomePage() {
   const [isReferenceLoading, setIsReferenceLoading] = useState(true);
   const [activeType, setActiveType] = useState('INSTANT');
   const [activeCategory, setActiveCategory] = useState(0);
+  const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
   const [activeStore, setActiveStore] = useState(0);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
@@ -102,7 +107,9 @@ function HomePage() {
   const sentinelRef = useRef(null);
   const createSummaryTimerRef = useRef(null);
   const pullStartYRef = useRef(null);
+  const swipeStartXRef = useRef(null);
   const canPullRef = useRef(false);
+  const gestureLockRef = useRef('');
   const autoMeetupTimeRef = useRef('');
 
   useEffect(() => {
@@ -142,14 +149,13 @@ function HomePage() {
 
       if (current.scenarioType !== 'INSTANT') {
         autoMeetupTimeRef.current = '';
-        if (current.expirePreset === 'custom' && current.meetupTime === '') {
+        if (current.expirePreset === 'custom') {
           return current;
         }
 
         return {
           ...current,
           expirePreset: 'custom',
-          meetupTime: '',
         };
       }
 
@@ -237,6 +243,64 @@ function HomePage() {
       setCampaignError('');
 
       try {
+        if (activeType === 'MINE') {
+          const mineQuery = {
+            page: 0,
+            size: PAGE_SIZE,
+          };
+
+          if (!token) {
+            if (!cancelled) {
+              setCampaigns([]);
+              setPage(0);
+              setHasMore(false);
+              setCampaignError(LABELS.loginRequiredForMine);
+            }
+            return;
+          }
+
+          let items = [];
+
+          if (activeMyCampaignFilter === 'HOSTED') {
+            const data = await fetchMyHostedCampaigns(mineQuery, token);
+            items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+          } else if (activeMyCampaignFilter === 'JOINED') {
+            const data = await fetchMyJoinedCampaigns(mineQuery, token);
+            items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+          } else {
+            const [hostedData, joinedData] = await Promise.all([
+              fetchMyHostedCampaigns(mineQuery, token),
+              fetchMyJoinedCampaigns(mineQuery, token),
+            ]);
+
+            const hostedItems = Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : [];
+            const joinedItems = Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : [];
+            const mergedCampaigns = [...hostedItems, ...joinedItems];
+            const campaignMap = new Map();
+
+            mergedCampaigns.forEach((campaign, index) => {
+              const key =
+                campaign.id ??
+                campaign.campaignId ??
+                `${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
+              if (!campaignMap.has(key)) {
+                campaignMap.set(key, campaign);
+              }
+            });
+
+            items = Array.from(campaignMap.values());
+          }
+
+          if (cancelled) {
+            return;
+          }
+
+          setCampaigns(items.map(mapCampaign));
+          setPage(0);
+          setHasMore(false);
+          return;
+        }
+
         const data = await fetchCampaigns({
           page: 0,
           size: PAGE_SIZE,
@@ -274,7 +338,7 @@ function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [activeCategory, activeStore, activeType, deferredSearch, refreshKey]);
+  }, [activeCategory, activeMyCampaignFilter, activeStore, activeType, deferredSearch, refreshKey, token]);
 
   useEffect(() => {
     if (!isRefreshing) {
@@ -289,7 +353,7 @@ function HomePage() {
 
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || !hasMore || isInitialLoading || isLoadingMore) {
+    if (!node || activeType === 'MINE' || !hasMore || isInitialLoading || isLoadingMore) {
       return undefined;
     }
 
@@ -427,23 +491,64 @@ function HomePage() {
     setRefreshKey((current) => current + 1);
   };
 
+  const switchActiveTypeBySwipe = (direction) => {
+    if (window.innerWidth >= 700) {
+      return;
+    }
+
+    setActiveType((current) => {
+      const currentIndex = TYPE_OPTIONS.findIndex((option) => option.value === current);
+      if (currentIndex === -1) {
+        return current;
+      }
+
+      const nextIndex =
+        direction === 'left'
+          ? Math.min(currentIndex + 1, TYPE_OPTIONS.length - 1)
+          : Math.max(currentIndex - 1, 0);
+
+      return TYPE_OPTIONS[nextIndex]?.value ?? current;
+    });
+  };
+
   const handleTouchStart = (event) => {
+    const touch = event.touches[0];
+    swipeStartXRef.current = touch?.clientX ?? null;
+    pullStartYRef.current = touch?.clientY ?? null;
+    gestureLockRef.current = '';
+
     if (window.innerWidth >= 700 || window.scrollY > 0 || isRefreshing) {
       canPullRef.current = false;
       return;
     }
 
-    pullStartYRef.current = event.touches[0]?.clientY ?? null;
     canPullRef.current = true;
   };
 
   const handleTouchMove = (event) => {
-    if (!canPullRef.current || pullStartYRef.current == null) {
+    const touch = event.touches[0];
+    if (!touch || swipeStartXRef.current == null || pullStartYRef.current == null) {
       return;
     }
 
-    const currentY = event.touches[0]?.clientY ?? pullStartYRef.current;
-    const delta = currentY - pullStartYRef.current;
+    const deltaX = touch.clientX - swipeStartXRef.current;
+    const deltaY = touch.clientY - pullStartYRef.current;
+    const absDeltaX = Math.abs(deltaX);
+    const absDeltaY = Math.abs(deltaY);
+
+    if (!gestureLockRef.current && (absDeltaX > 12 || absDeltaY > 12)) {
+      gestureLockRef.current = absDeltaX > absDeltaY ? 'horizontal' : 'vertical';
+      if (gestureLockRef.current === 'horizontal') {
+        canPullRef.current = false;
+        setPullDistance(0);
+      }
+    }
+
+    if (gestureLockRef.current !== 'vertical' || !canPullRef.current) {
+      return;
+    }
+
+    const delta = deltaY;
     if (delta <= 0) {
       setPullDistance(0);
       return;
@@ -452,19 +557,44 @@ function HomePage() {
     setPullDistance(Math.min(delta * 0.45, 84));
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (event) => {
+    const startX = swipeStartXRef.current;
+    const startY = pullStartYRef.current;
+    const endTouch = event.changedTouches?.[0] ?? null;
+    const deltaX = startX != null && endTouch ? endTouch.clientX - startX : 0;
+    const deltaY = startY != null && endTouch ? endTouch.clientY - startY : 0;
+    const isHorizontalSwipe = Math.abs(deltaX) >= 48 && Math.abs(deltaX) > Math.abs(deltaY);
+
+    swipeStartXRef.current = null;
+    pullStartYRef.current = null;
+    gestureLockRef.current = '';
+
+    if (isHorizontalSwipe) {
+      switchActiveTypeBySwipe(deltaX < 0 ? 'left' : 'right');
+      canPullRef.current = false;
+      setPullDistance(0);
+      return;
+    }
+
     if (!canPullRef.current) {
       return;
     }
 
     canPullRef.current = false;
-    pullStartYRef.current = null;
 
     if (pullDistance >= 60) {
       refreshHome();
       return;
     }
 
+    setPullDistance(0);
+  };
+
+  const handleTouchCancel = () => {
+    canPullRef.current = false;
+    swipeStartXRef.current = null;
+    pullStartYRef.current = null;
+    gestureLockRef.current = '';
     setPullDistance(0);
   };
 
@@ -511,6 +641,18 @@ function HomePage() {
 
     if (campaignForm.expirePreset === 'custom' && !resolveExpireTime(campaignForm)) {
       setCreateCampaignError('請選擇有效的截止時間');
+      return;
+    }
+
+    const expireDate = resolveExpireDate(campaignForm);
+    const meetupDate = parseLocalDateTime(campaignForm.meetupTime);
+    if (!expireDate || !meetupDate) {
+      setCreateCampaignError('\u8acb\u9078\u64c7\u6709\u6548\u7684\u622a\u6b62\u6642\u9593\u8207\u9762\u4ea4\u6642\u9593');
+      return;
+    }
+
+    if (meetupDate.getTime() < expireDate.getTime()) {
+      setCreateCampaignError('\u9762\u4ea4\u6642\u9593\u4e0d\u80fd\u65e9\u65bc\u622a\u6b62\u6642\u9593');
       return;
     }
 
@@ -636,6 +778,7 @@ function HomePage() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
     >
       <div
         className={`pull-refresh-indicator${isRefreshing ? ' refreshing' : ''}${pullDistance >= 60 ? ' ready' : ''}`}
@@ -734,23 +877,38 @@ function HomePage() {
         </section>
 
         <section className="category-strip">
-          <button
-            type="button"
-            className={activeCategory === 0 ? 'category-button active' : 'category-button'}
-            onClick={() => setActiveCategory(0)}
-          >
-            {LABELS.all}
-          </button>
-          {categories.map((category) => (
-            <button
-              key={category.id}
-              type="button"
-              className={activeCategory === category.id ? 'category-button active' : 'category-button'}
-              onClick={() => setActiveCategory(category.id)}
-            >
-              {category.icon ? `${category.icon} ${category.name}` : category.name}
-            </button>
-          ))}
+          {activeType === 'MINE' ? (
+            MY_CAMPAIGN_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={activeMyCampaignFilter === option.value ? 'category-button active' : 'category-button'}
+                onClick={() => setActiveMyCampaignFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))
+          ) : (
+            <>
+              <button
+                type="button"
+                className={activeCategory === 0 ? 'category-button active' : 'category-button'}
+                onClick={() => setActiveCategory(0)}
+              >
+                {LABELS.all}
+              </button>
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  className={activeCategory === category.id ? 'category-button active' : 'category-button'}
+                  onClick={() => setActiveCategory(category.id)}
+                >
+                  {category.icon ? `${category.icon} ${category.name}` : category.name}
+                </button>
+              ))}
+            </>
+          )}
         </section>
 
         {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
@@ -769,9 +927,11 @@ function HomePage() {
               deal={deal}
               countdownNow={countdownNow}
               formatCountdown={formatCountdown}
+              formatDateTime={formatDateTime}
               getScenarioLabel={getScenarioLabel}
               getTypeClass={getTypeClass}
               onJoin={handleOpenJoinCampaign}
+              showJoinAction={activeType !== 'MINE' && deal.host?.id !== user?.id}
             />
           ))}
         </section>
