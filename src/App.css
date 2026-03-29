@@ -13,7 +13,7 @@
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
   align-items: center;
   gap: 12px;
   padding: 12px;
@@ -76,6 +76,16 @@
   justify-self: start;
 }
 
+.profile-trigger.icon-button {
+  width: 48px;
+  height: 48px;
+}
+
+.notification-trigger.icon-button {
+  width: 48px;
+  height: 48px;
+}
+
 .login-chip {
   min-width: 108px;
   padding: 6px 14px;
@@ -123,6 +133,11 @@
   width: 18px;
   height: 18px;
   fill: currentColor;
+}
+
+.notification-trigger svg {
+  width: 24px;
+  height: 24px;
 }
 
 .store-selector {
@@ -1014,7 +1029,7 @@
 
 @media (min-width: 700px) {
   .topbar {
-    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
     gap: 18px;
   }
 
