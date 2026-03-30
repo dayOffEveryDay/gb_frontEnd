@@ -217,6 +217,24 @@ export function fetchMyJoinedCampaigns(params, token) {
   });
 }
 
+export function fetchMyParticipation(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/participants/me`, {
+    token,
+  });
+}
+
+export function fetchHostDashboard(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/host-dashboard`, {
+    token,
+  });
+}
+
+export function fetchCampaignChatMessages(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/chat-messages`, {
+    token,
+  });
+}
+
 // 把 LINE callback code 送到後端，交換 JWT 與使用者資料。
 export function lineLogin(payload) {
   return request('/api/v1/auth/line', {
@@ -254,6 +272,29 @@ export function joinCampaign(campaignId, payload, token) {
   return request(`/api/v1/campaigns/${campaignId}/join`, {
     method: 'POST',
     body: payload,
+    token,
+  });
+}
+
+export function reviseCampaign(campaignId, payload, token) {
+  return request(`/api/v1/campaigns/${campaignId}/revise`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function hostReviseCampaign(campaignId, payload, token) {
+  return request(`/api/v1/campaigns/${campaignId}/host-revise`, {
+    method: 'PUT',
+    body: payload,
+    token,
+  });
+}
+
+export function withdrawCampaign(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/withdraw`, {
+    method: 'POST',
     token,
   });
 }

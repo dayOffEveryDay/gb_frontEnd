@@ -1,4 +1,4 @@
-import { AvatarIcon } from './Icons';
+import { AvatarIcon, ChatIcon, MoreIcon } from './Icons';
 
 function DealCard({
   labels,
@@ -10,14 +10,31 @@ function DealCard({
   getTypeClass,
   onJoin,
   onOpenGallery,
+  onOpenChat,
+  onOpenParticipation,
   showJoinAction = true,
 }) {
+  const isChatEnabled = typeof onOpenChat === 'function';
+  const canManageParticipation = typeof onOpenParticipation === 'function';
+
   return (
-    <article className="deal-card">
+    <article
+      className={isChatEnabled ? 'deal-card deal-card-clickable' : 'deal-card'}
+      onClick={isChatEnabled ? () => onOpenChat(deal) : undefined}
+    >
       <div className="deal-upper">
-        <button type="button" className="deal-image-wrap deal-image-button" onClick={() => onOpenGallery(deal, 0)}>
+        <button
+          type="button"
+          className="deal-image-wrap deal-image-button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenGallery(deal, 0);
+          }}
+        >
           <img src={deal.image} alt={deal.itemName} className="deal-image" />
-          <span className="countdown-badge">倒數: {formatCountdown(deal.expireTime ?? deal.meetupTime, countdownNow)}</span>
+          <span className="countdown-badge">
+            倒數: {formatCountdown(deal.expireTime ?? deal.meetupTime, countdownNow)}
+          </span>
           {deal.imageUrls?.length > 1 && <span className="deal-image-count">{deal.imageUrls.length} 張</span>}
         </button>
 
@@ -27,6 +44,37 @@ function DealCard({
             <div className="deal-tag-row">
               <span className={`type-pill ${getTypeClass(deal.scenarioType)}`}>{getScenarioLabel(deal.scenarioType)}</span>
               <span className="type-pill category-pill">{deal.categoryName || labels.noValue}</span>
+              <div className="deal-tag-actions">
+                <button
+                  type="button"
+                  className={isChatEnabled ? 'chat-action-button' : 'chat-action-button disabled'}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isChatEnabled) {
+                      onOpenChat(deal);
+                    }
+                  }}
+                  disabled={!isChatEnabled}
+                  aria-label="開啟團購對話"
+                  title={isChatEnabled ? '開啟團購對話' : '團購單尚未成立，暫時不能聊天'}
+                >
+                  <ChatIcon />
+                </button>
+                {canManageParticipation && (
+                  <button
+                    type="button"
+                    className="chat-action-button more-action-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenParticipation(deal);
+                    }}
+                    aria-label="管理我的認購"
+                    title="管理我的認購"
+                  >
+                    <MoreIcon />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -81,7 +129,10 @@ function DealCard({
           <button
             type="button"
             className="join-campaign-button"
-            onClick={() => onJoin(deal)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onJoin(deal);
+            }}
             disabled={deal.availableQuantity <= 0}
           >
             {deal.availableQuantity <= 0 ? labels.soldOut : labels.joinCampaign}

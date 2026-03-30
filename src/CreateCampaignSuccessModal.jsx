@@ -20,7 +20,7 @@ function CreateCampaignSuccessModal({
         <h2 className="modal-title">{labels.createCampaignSuccess}</h2>
         <div className="summary-list">
           <div className="summary-item">
-            <span className="footer-label">品名</span>
+            <span className="footer-label">商品</span>
             <strong>{summary.itemName}</strong>
           </div>
           <div className="summary-item">
@@ -36,8 +36,12 @@ function CreateCampaignSuccessModal({
             <strong>{summary.categoryName}</strong>
           </div>
           <div className="summary-item">
-            <span className="footer-label">數量</span>
-            <strong>{summary.totalQuantity}</strong>
+            <span className="footer-label">總數量</span>
+            <strong>{summary.productTotalQuantity}</strong>
+          </div>
+          <div className="summary-item">
+            <span className="footer-label">待認購數量</span>
+            <strong>{summary.openQuantity}</strong>
           </div>
           <div className="summary-item">
             <span className="footer-label">單價</span>
@@ -60,7 +64,7 @@ function CreateCampaignSuccessModal({
             <strong>{summary.imageCount} 張</strong>
           </div>
         </div>
-        <p className="panel-note">10 秒後會自動關閉，也可以按右上角或空白處關閉。</p>
+        <p className="panel-note">10 秒後會自動關閉，也可以直接點背景關閉。</p>
       </div>
     </div>
   );

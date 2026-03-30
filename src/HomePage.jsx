@@ -5,16 +5,21 @@ import {
   createCampaign,
   fetchCampaigns,
   fetchCategories,
+  fetchHostDashboard,
   fetchMyHostedCampaigns,
   fetchMyJoinedCampaigns,
+  fetchMyParticipation,
   fetchStores,
   getFrontendBaseUrl,
   getStoredToken,
   getStoredUser,
+  hostReviseCampaign,
   joinCampaign,
   LINE_LOGIN_SUCCESS_MESSAGE,
   openLineLoginPopup,
+  reviseCampaign,
   setStoredAuth,
+  withdrawCampaign,
   updateCurrentUserProfile,
 } from './api';
 import { EXPIRE_PRESET_OPTIONS, LABELS, MY_CAMPAIGN_OPTIONS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
@@ -41,6 +46,8 @@ import CreateCampaignSuccessModal from './CreateCampaignSuccessModal';
 import JoinCampaignModal from './JoinCampaignModal';
 import DealCard from './DealCard';
 import ImageGalleryModal from './ImageGalleryModal';
+import CampaignChatModal from './CampaignChatModal';
+import ParticipationActionModal from './ParticipationActionModal';
 
 function getCampaignLifecycle(rawCampaign) {
   const statusSource = [
@@ -68,6 +75,24 @@ function getCampaignLifecycle(rawCampaign) {
   }
 
   return 'ACTIVE';
+}
+
+function canOpenCampaignChat(campaign) {
+  const statusSource = [
+    campaign?.status,
+    campaign?.campaignStatus,
+    campaign?.campaign_status,
+    campaign?.state,
+  ]
+    .find(Boolean)
+    ?.toString()
+    .toUpperCase();
+
+  if (!statusSource) {
+    return Number(campaign?.availableQuantity) <= 0;
+  }
+
+  return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
 }
 
 function HomePage() {
@@ -99,6 +124,7 @@ function HomePage() {
     confirmJoinCampaign: '\u78ba\u8a8d\u52a0\u5165',
     submittingJoinCampaign: '\u9001\u51fa\u4e2d...',
     soldOut: '\u5df2\u984d\u6eff',
+    totalQuantityLabel: '\u7e3d\u6578\u91cf',
   };
 
   const [stores, setStores] = useState([]);
@@ -140,6 +166,11 @@ function HomePage() {
   const [purchaseQuantity, setPurchaseQuantity] = useState('1');
   const [purchaseError, setPurchaseError] = useState('');
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+  const [participationCampaign, setParticipationCampaign] = useState(null);
+  const [participationQuantityDraft, setParticipationQuantityDraft] = useState('1');
+  const [participationError, setParticipationError] = useState('');
+  const [isSubmittingParticipation, setIsSubmittingParticipation] = useState(false);
+  const [chatCampaign, setChatCampaign] = useState(null);
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
     title: '',
@@ -678,14 +709,15 @@ function HomePage() {
       ['商品名稱', campaignForm.itemName.trim()],
       ['商品圖片', campaignForm.images.length > 0 ? 'ok' : ''],
       ['單價', campaignForm.pricePerUnit],
-      ['待認購數量', campaignForm.totalQuantity],
+      ['總數量', campaignForm.productTotalQuantity],
+      ['待認購數量', campaignForm.openQuantity],
       ['截止時間', campaignForm.expirePreset === 'custom' ? campaignForm.expireTime : campaignForm.expirePreset],
       ['面交時間', campaignForm.meetupTime],
       ['面交地點', campaignForm.meetupLocation.trim()],
     ];
 
     if (campaignForm.scenarioType !== 'INSTANT') {
-      requiredChecks[8][1] = 'ok';
+      requiredChecks[9][1] = 'ok';
     }
 
     const missingField = requiredChecks.find(([, value]) => !value);
@@ -701,6 +733,11 @@ function HomePage() {
 
     if (campaignForm.expirePreset === 'custom' && !resolveExpireTime(campaignForm)) {
       setCreateCampaignError('請選擇有效的截止時間');
+      return;
+    }
+
+    if (Number(campaignForm.openQuantity) > Number(campaignForm.productTotalQuantity)) {
+      setCreateCampaignError('待認購數量不能大於總數量');
       return;
     }
 
@@ -727,7 +764,8 @@ function HomePage() {
         storeId: Number(campaignForm.storeId),
         categoryId: Number(campaignForm.categoryId),
         pricePerUnit: Number(campaignForm.pricePerUnit),
-        totalQuantity: Number(campaignForm.totalQuantity),
+        productTotalQuantity: Number(campaignForm.productTotalQuantity),
+        openQuantity: Number(campaignForm.openQuantity),
       };
       delete payload.expirePreset;
 
@@ -741,7 +779,8 @@ function HomePage() {
         scenarioType: payload.scenarioType,
         storeName: stores.find((store) => store.id === payload.storeId)?.name || LABELS.noValue,
         categoryName: categories.find((category) => category.id === payload.categoryId)?.name || LABELS.noValue,
-        totalQuantity: payload.totalQuantity,
+        productTotalQuantity: payload.productTotalQuantity,
+        openQuantity: payload.openQuantity,
         pricePerUnit: payload.pricePerUnit,
         expireTime: payload.expireTime,
         meetupTime: payload.meetupTime,
@@ -874,6 +913,172 @@ function HomePage() {
     });
   };
 
+  const handleOpenChat = (deal) => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    if (!canOpenCampaignChat(deal)) {
+      return;
+    }
+
+    setChatCampaign(deal);
+  };
+
+  const handleOpenParticipation = async (deal) => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setParticipationError('');
+
+    try {
+      const isHostDeal = deal.host?.id === user?.id || deal.isHost;
+
+      if (isHostDeal) {
+        const dashboard = await fetchHostDashboard(deal.id, token);
+
+        setParticipationCampaign({
+          ...deal,
+          managementMode: 'HOST',
+          dashboard,
+          totalPhysicalQuantity: Number(dashboard?.totalPhysicalQuantity ?? 0),
+          hostReservedQuantity: Number(dashboard?.hostReservedQuantity ?? 0),
+          openQuantity: Number(dashboard?.openQuantity ?? 0),
+          alreadySoldQuantity: Number(dashboard?.alreadySoldQuantity ?? 0),
+        });
+        setParticipationQuantityDraft(String(Number(dashboard?.hostReservedQuantity ?? 0)));
+        return;
+      }
+
+      const participation = await fetchMyParticipation(deal.id, token);
+      const mergedDeal = {
+        ...deal,
+        managementMode: 'JOINED',
+        isHost: Boolean(participation?.host ?? deal.isHost),
+        joined: Boolean(participation?.joined ?? deal.joined ?? Number(deal.quantity) > 0),
+        quantity: Number(participation?.quantity ?? deal.quantity ?? 0),
+      };
+
+      if (mergedDeal.isHost || !mergedDeal.joined || mergedDeal.quantity <= 0) {
+        setParticipationError('目前沒有可調整的認購紀錄');
+        return;
+      }
+
+      setParticipationCampaign(mergedDeal);
+      setParticipationQuantityDraft(String(mergedDeal.quantity));
+    } catch (error) {
+      setParticipationError(error.message);
+    }
+  };
+
+  const handleCloseParticipation = () => {
+    if (isSubmittingParticipation) {
+      return;
+    }
+
+    setParticipationCampaign(null);
+    setParticipationQuantityDraft('1');
+    setParticipationError('');
+  };
+
+  const handleSubmitParticipation = async () => {
+    if (!participationCampaign) {
+      return;
+    }
+
+    if (participationCampaign.managementMode === 'HOST') {
+      const nextReservedQuantity = Number(participationQuantityDraft);
+      const totalPhysicalQuantity = Number(participationCampaign.totalPhysicalQuantity ?? 0);
+      const alreadySoldQuantity = Number(participationCampaign.alreadySoldQuantity ?? 0);
+
+      if (!Number.isInteger(nextReservedQuantity) || nextReservedQuantity < 0) {
+        setParticipationError('請輸入 0 以上的整數自留數量');
+        return;
+      }
+
+      const nextOpenQuantity = totalPhysicalQuantity - nextReservedQuantity;
+      if (nextOpenQuantity < alreadySoldQuantity) {
+        setParticipationError('自留數量過高，會小於目前已售出數量');
+        return;
+      }
+
+      setIsSubmittingParticipation(true);
+      setParticipationError('');
+
+      try {
+        await hostReviseCampaign(
+          participationCampaign.id,
+          {
+            newProductTotalQuantity: totalPhysicalQuantity,
+            newOpenQuantity: nextOpenQuantity,
+          },
+          token
+        );
+        handleCloseParticipation();
+        setRefreshKey((current) => current + 1);
+      } catch (error) {
+        setParticipationError(error.message);
+      } finally {
+        setIsSubmittingParticipation(false);
+      }
+
+      return;
+    }
+
+    const nextQuantity = Number(participationQuantityDraft);
+    const currentQuantity = Number(participationCampaign.quantity) || 0;
+
+    if (!Number.isInteger(nextQuantity) || nextQuantity <= 0) {
+      setParticipationError('請輸入大於 0 的整數數量');
+      return;
+    }
+
+    if (nextQuantity === currentQuantity) {
+      handleCloseParticipation();
+      return;
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      if (nextQuantity > currentQuantity) {
+        await joinCampaign(participationCampaign.id, { quantity: nextQuantity - currentQuantity }, token);
+      } else {
+        await reviseCampaign(participationCampaign.id, { quantity: currentQuantity - nextQuantity }, token);
+      }
+
+      handleCloseParticipation();
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setParticipationError(error.message);
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
+  };
+
+  const handleWithdrawParticipation = async () => {
+    if (!participationCampaign) {
+      return;
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      await withdrawCampaign(participationCampaign.id, token);
+      handleCloseParticipation();
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setParticipationError(error.message);
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
+  };
+
   return (
     <div
       className="app-shell"
@@ -928,7 +1133,7 @@ function HomePage() {
       <NotificationsModal labels={LABELS} isOpen={isNotificationsOpen} onClose={() => setIsNotificationsOpen(false)} />
 
       <CreateCampaignModal
-        labels={LABELS}
+        labels={uiLabels}
         isOpen={isCreateCampaignOpen}
         stores={stores}
         categories={categories}
@@ -973,6 +1178,27 @@ function HomePage() {
         onPrev={() => handleStepGallery('prev')}
         onNext={() => handleStepGallery('next')}
         onSelect={handleSelectGalleryImage}
+      />
+
+      <CampaignChatModal
+        key={chatCampaign?.id ?? 'closed-chat'}
+        isOpen={Boolean(chatCampaign)}
+        campaign={chatCampaign}
+        token={token}
+        currentUser={user}
+        onClose={() => setChatCampaign(null)}
+      />
+
+      <ParticipationActionModal
+        isOpen={Boolean(participationCampaign)}
+        campaign={participationCampaign}
+        quantityDraft={participationQuantityDraft}
+        isSubmitting={isSubmittingParticipation}
+        error={participationError}
+        onChangeQuantity={setParticipationQuantityDraft}
+        onClose={handleCloseParticipation}
+        onSubmit={handleSubmitParticipation}
+        onWithdraw={handleWithdrawParticipation}
       />
 
       <main className="content">
@@ -1054,6 +1280,12 @@ function HomePage() {
               getTypeClass={getTypeClass}
               onJoin={handleOpenJoinCampaign}
               onOpenGallery={handleOpenGallery}
+              onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
+              onOpenParticipation={
+                activeType === 'MINE'
+                  ? handleOpenParticipation
+                  : undefined
+              }
               showJoinAction={activeType !== 'MINE' && deal.host?.id !== user?.id}
             />
           ))}

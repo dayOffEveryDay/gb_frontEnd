@@ -151,13 +151,24 @@ function CreateCampaignModal({
           </label>
 
           <label className="profile-field">
+            <span>{labels.totalQuantityLabel ?? '總數量'}</span>
+            <input
+              type="number"
+              min="1"
+              required
+              value={campaignForm.productTotalQuantity}
+              onChange={(event) => setCampaignForm((current) => ({ ...current, productTotalQuantity: event.target.value }))}
+            />
+          </label>
+
+          <label className="profile-field">
             <span>{labels.pendingQuantity}</span>
             <input
               type="number"
               min="1"
               required
-              value={campaignForm.totalQuantity}
-              onChange={(event) => setCampaignForm((current) => ({ ...current, totalQuantity: event.target.value }))}
+              value={campaignForm.openQuantity}
+              onChange={(event) => setCampaignForm((current) => ({ ...current, openQuantity: event.target.value }))}
             />
           </label>
 
