@@ -182,6 +182,24 @@
 .notification-trigger {
   flex: 0 0 auto;
   justify-self: end;
+  position: relative;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
 }
 
 .desktop-only {
@@ -222,6 +240,34 @@
 .notification-modal {
   max-height: min(80vh, 720px);
   overflow: auto;
+}
+
+.notification-list {
+  display: grid;
+  gap: 12px;
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.notification-item-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notification-item-copy p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.5;
 }
 
 .create-campaign-modal {
@@ -390,6 +436,13 @@
   margin: 12px 0 0;
   color: var(--accent);
   font-size: 14px;
+}
+
+.inline-warning {
+  margin: 0;
+  color: #f0b35a;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .panel-header,
@@ -894,6 +947,26 @@
   background: color-mix(in srgb, var(--surface-alt) 76%, transparent);
 }
 
+.participation-confirm {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line-soft));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+
+.participation-confirm p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.participation-confirm-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .text-button.danger {
   color: var(--accent);
 }
@@ -1182,8 +1255,10 @@
 
 .chat-bubble {
   justify-self: start;
+  align-self: start;
+  width: fit-content;
   max-width: min(420px, 88%);
-  display: grid;
+  display: inline-grid;
   gap: 6px;
   padding: 10px 12px;
   border-radius: 16px;
@@ -1208,6 +1283,7 @@
   margin: 0;
   line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chat-composer {

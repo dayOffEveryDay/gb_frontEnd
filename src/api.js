@@ -229,6 +229,19 @@ export function fetchHostDashboard(campaignId, token) {
   });
 }
 
+export function fetchUnreadNotifications(token) {
+  return request('/api/v1/notifications/unread', {
+    token,
+  });
+}
+
+export function markNotificationRead(notificationId, token) {
+  return request(`/api/v1/notifications/${notificationId}/read`, {
+    method: 'PUT',
+    token,
+  });
+}
+
 export function fetchCampaignChatMessages(campaignId, token) {
   return request(`/api/v1/campaigns/${campaignId}/chat-messages`, {
     token,
@@ -288,6 +301,13 @@ export function hostReviseCampaign(campaignId, payload, token) {
   return request(`/api/v1/campaigns/${campaignId}/host-revise`, {
     method: 'PUT',
     body: payload,
+    token,
+  });
+}
+
+export function cancelCampaign(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/cancel`, {
+    method: 'POST',
     token,
   });
 }

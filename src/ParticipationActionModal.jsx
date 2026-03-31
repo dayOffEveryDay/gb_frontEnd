@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 function ParticipationActionModal({
   isOpen,
   campaign,
@@ -8,7 +10,10 @@ function ParticipationActionModal({
   onClose,
   onSubmit,
   onWithdraw,
+  onCancelCampaign,
 }) {
+  const [isCancelConfirming, setIsCancelConfirming] = useState(false);
+
   if (!isOpen || !campaign) {
     return null;
   }
@@ -16,11 +21,30 @@ function ParticipationActionModal({
   const isHostMode = campaign.managementMode === 'HOST';
   const dashboard = campaign.dashboard ?? {};
   const participants = Array.isArray(dashboard.participants) ? dashboard.participants : [];
+  const hasJoinedParticipants = participants.length > 0 || Number(dashboard.alreadySoldQuantity ?? 0) > 0;
+
+  const cancelMessage = hasJoinedParticipants
+    ? '目前已有參與者加入，取消團購單會扣除主揪信用分，確定要取消嗎？'
+    : '確定要取消這張團購單嗎？';
+
+  const handleClose = () => {
+    setIsCancelConfirming(false);
+    onClose();
+  };
+
+  const handleToggleCancelConfirm = () => {
+    setIsCancelConfirming((current) => !current);
+  };
+
+  const handleConfirmCancel = () => {
+    setIsCancelConfirming(false);
+    onCancelCampaign();
+  };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={handleClose}>
       <div className="participation-modal" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={onClose}>
+        <button type="button" className="modal-close" onClick={handleClose}>
           關閉
         </button>
         <p className="eyebrow">{isHostMode ? '主揪管理' : '參與設定'}</p>
@@ -76,6 +100,34 @@ function ParticipationActionModal({
                 <p className="panel-note">目前沒有參與者</p>
               )}
             </div>
+
+            {hasJoinedParticipants && (
+              <p className="inline-warning">取消團購單時，若已有參與者加入，會扣除主揪信用分。</p>
+            )}
+
+            {isCancelConfirming && (
+              <div className="participation-confirm">
+                <p>{cancelMessage}</p>
+                <div className="participation-confirm-actions">
+                  <button
+                    type="button"
+                    className="text-button danger"
+                    onClick={handleConfirmCancel}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? '處理中...' : '確認取消'}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setIsCancelConfirming(false)}
+                    disabled={isSubmitting}
+                  >
+                    返回
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="participation-panel">
@@ -101,12 +153,21 @@ function ParticipationActionModal({
           <button type="button" className="save-button" onClick={onSubmit} disabled={isSubmitting}>
             {isSubmitting ? '處理中...' : isHostMode ? '儲存自留調整' : '修改數量'}
           </button>
-          {!isHostMode && (
+          {isHostMode ? (
+            <button
+              type="button"
+              className="text-button danger"
+              onClick={handleToggleCancelConfirm}
+              disabled={isSubmitting}
+            >
+              {isCancelConfirming ? '收合取消提醒' : '取消團購單'}
+            </button>
+          ) : (
             <button type="button" className="text-button danger" onClick={onWithdraw} disabled={isSubmitting}>
               退出團購單
             </button>
           )}
-          <button type="button" className="text-button" onClick={onClose} disabled={isSubmitting}>
+          <button type="button" className="text-button" onClick={handleClose} disabled={isSubmitting}>
             取消
           </button>
         </div>

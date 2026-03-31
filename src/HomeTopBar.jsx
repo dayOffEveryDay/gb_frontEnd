@@ -6,6 +6,7 @@ function HomeTopBar({
   user,
   stores,
   activeStore,
+  unreadCount = 0,
   onChangeStore,
   onOpenProfile,
   onOpenNotifications,
@@ -62,6 +63,9 @@ function HomeTopBar({
             aria-label="notifications"
           >
             <BellIcon />
+            {unreadCount > 0 && (
+              <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+            )}
           </button>
         ) : (
           <div className="topbar-side right">

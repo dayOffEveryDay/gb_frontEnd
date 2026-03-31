@@ -1,9 +1,12 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { Client } from '@stomp/stompjs';
 import './App.css';
 import {
+  cancelCampaign,
   clearStoredAuth,
   createCampaign,
   fetchCampaigns,
+  fetchUnreadNotifications,
   fetchCategories,
   fetchHostDashboard,
   fetchMyHostedCampaigns,
@@ -11,11 +14,13 @@ import {
   fetchMyParticipation,
   fetchStores,
   getFrontendBaseUrl,
+  getBackendBaseUrl,
   getStoredToken,
   getStoredUser,
   hostReviseCampaign,
   joinCampaign,
   LINE_LOGIN_SUCCESS_MESSAGE,
+  markNotificationRead,
   openLineLoginPopup,
   reviseCampaign,
   setStoredAuth,
@@ -75,6 +80,26 @@ function getCampaignLifecycle(rawCampaign) {
   }
 
   return 'ACTIVE';
+}
+
+function normalizeNotification(notification) {
+  const type = notification.type ?? 'NOTICE';
+  const typeLabelMap = {
+    CAMPAIGN_FULL: '團購已滿團',
+    CAMPAIGN_CANCELLED: '團購已取消',
+    CAMPAIGN_DELIVERED: '已標記交付',
+    CAMPAIGN_COMPLETED: '團購已完成',
+    NOTICE: '通知',
+  };
+
+  return {
+    id: notification.id,
+    type,
+    typeLabel: typeLabelMap[type] ?? type,
+    referenceId: notification.referenceId ?? notification.reference_id ?? null,
+    content: notification.content ?? '',
+    createdAt: notification.createdAt ?? notification.created_at ?? '',
+  };
 }
 
 function canOpenCampaignChat(campaign) {
@@ -147,6 +172,9 @@ function HomePage() {
   const [user, setUser] = useState(() => normalizeUser(getStoredUser()));
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsError, setNotificationsError] = useState('');
+  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -198,6 +226,8 @@ function HomePage() {
   const canPullRef = useRef(false);
   const gestureLockRef = useRef('');
   const autoMeetupTimeRef = useRef('');
+  const notificationClientRef = useRef(null);
+  const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -275,6 +305,99 @@ function HomePage() {
     window.addEventListener('message', handleLineLoginMessage);
     return () => window.removeEventListener('message', handleLineLoginMessage);
   }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setNotifications([]);
+      setNotificationsError('');
+      setIsNotificationsLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    setIsNotificationsLoading(true);
+    setNotificationsError('');
+
+    fetchUnreadNotifications(token)
+      .then((data) => {
+        if (!cancelled) {
+          setNotifications(Array.isArray(data) ? data.map(normalizeNotification) : []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setNotificationsError(error.message);
+          setNotifications([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsNotificationsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      return undefined;
+    }
+
+    let disposed = false;
+
+    const connect = async () => {
+      try {
+        const sockJsModule = await import('sockjs-client/dist/sockjs');
+        const SockJS = sockJsModule.default;
+
+        if (disposed) {
+          return;
+        }
+
+        const client = new Client({
+          webSocketFactory: () => new SockJS(wsUrl),
+          connectHeaders: {
+            Authorization: `Bearer ${token}`,
+          },
+          reconnectDelay: 5000,
+          debug: () => {},
+          onConnect: () => {
+            client.subscribe('/user/queue/notifications', (frame) => {
+              try {
+                const nextNotification = normalizeNotification(JSON.parse(frame.body));
+                setNotifications((current) => {
+                  const filtered = current.filter((item) => item.id !== nextNotification.id);
+                  return [nextNotification, ...filtered];
+                });
+              } catch {
+                setNotificationsError('通知資料解析失敗');
+              }
+            });
+          },
+          onStompError: (frame) => {
+            setNotificationsError(frame.headers.message || '通知連線發生錯誤');
+          },
+        });
+
+        client.activate();
+        notificationClientRef.current = client;
+      } catch (error) {
+        setNotificationsError(error instanceof Error ? error.message : '通知連線初始化失敗');
+      }
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      notificationClientRef.current?.deactivate();
+      notificationClientRef.current = null;
+    };
+  }, [token, wsUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -512,6 +635,19 @@ function HomePage() {
     setIsCreateCampaignOpen(false);
   };
 
+  const handleReadNotification = async (notificationId) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await markNotificationRead(notificationId, token);
+      setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    } catch (error) {
+      setNotificationsError(error.message);
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (!token) {
       setAuthError('請先登入後再更新個人資料。');
@@ -562,7 +698,7 @@ function HomePage() {
     setIsCreateCampaignOpen(true);
   };
 
-  const refreshHome = () => {
+  const refreshHome = useCallback(() => {
     if (isRefreshing) {
       return;
     }
@@ -570,7 +706,42 @@ function HomePage() {
     setIsRefreshing(true);
     setReferenceRefreshKey((current) => current + 1);
     setRefreshKey((current) => current + 1);
-  };
+  }, [isRefreshing]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const refreshIntervalMs = activeType === 'INSTANT' ? 15000 : 30000;
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
+      refreshHome();
+    };
+
+    const intervalId = window.setInterval(refreshIfVisible, refreshIntervalMs);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshHome();
+      }
+    };
+    const handleWindowFocus = () => {
+      refreshIfVisible();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [activeType, refreshHome]);
 
   const switchActiveTypeBySwipe = (direction) => {
     if (window.innerWidth >= 700) {
@@ -1079,6 +1250,25 @@ function HomePage() {
     }
   };
 
+  const handleCancelHostedCampaign = async () => {
+    if (!participationCampaign) {
+      return;
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      await cancelCampaign(participationCampaign.id, token);
+      handleCloseParticipation();
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setParticipationError(error.message);
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
+  };
+
   return (
     <div
       className="app-shell"
@@ -1100,6 +1290,7 @@ function HomePage() {
         user={user}
         stores={stores}
         activeStore={activeStore}
+        unreadCount={notifications.length}
         onChangeStore={setActiveStore}
         onOpenProfile={openProfile}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
@@ -1130,7 +1321,15 @@ function HomePage() {
         onToggleTheme={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
       />
 
-      <NotificationsModal labels={LABELS} isOpen={isNotificationsOpen} onClose={() => setIsNotificationsOpen(false)} />
+      <NotificationsModal
+        labels={LABELS}
+        isOpen={isNotificationsOpen}
+        notifications={notifications}
+        isLoading={isNotificationsLoading}
+        error={notificationsError}
+        onClose={() => setIsNotificationsOpen(false)}
+        onReadNotification={handleReadNotification}
+      />
 
       <CreateCampaignModal
         labels={uiLabels}
@@ -1199,6 +1398,7 @@ function HomePage() {
         onClose={handleCloseParticipation}
         onSubmit={handleSubmitParticipation}
         onWithdraw={handleWithdrawParticipation}
+        onCancelCampaign={handleCancelHostedCampaign}
       />
 
       <main className="content">
