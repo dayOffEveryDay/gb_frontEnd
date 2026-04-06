@@ -1,3 +1,5 @@
+import { ChatIcon } from './Icons';
+
 function formatNotificationTime(value) {
   if (!value) {
     return '--';
@@ -23,7 +25,7 @@ function NotificationsModal({
   isLoading,
   error,
   onClose,
-  onReadNotification,
+  onNotificationAction,
 }) {
   if (!isOpen) {
     return null;
@@ -41,27 +43,31 @@ function NotificationsModal({
         <div className="notification-list">
           {isLoading && <p className="muted-copy">載入通知中...</p>}
           {!isLoading && error && <p className="inline-error">{error}</p>}
-          {!isLoading && !error && notifications.length === 0 && (
-            <p className="muted-copy">目前沒有未讀通知</p>
-          )}
+          {!isLoading && !error && notifications.length === 0 && <p className="muted-copy">目前沒有未讀通知。</p>}
           {!isLoading &&
             !error &&
-            notifications.map((notification) => (
-              <article key={notification.id} className="notification-item">
-                <div className="notification-item-copy">
-                  <strong>{notification.typeLabel}</strong>
-                  <p>{notification.content}</p>
-                  <time>{formatNotificationTime(notification.createdAt)}</time>
-                </div>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => onReadNotification(notification.id)}
-                >
-                  標記已讀
-                </button>
-              </article>
-            ))}
+            notifications.map((notification) => {
+              const canOpenChat = notification.type === 'CAMPAIGN_FULL' && notification.referenceId != null;
+
+              return (
+                <article key={notification.id ?? `${notification.type}-${notification.createdAt}`} className="notification-item">
+                  <div className="notification-item-copy">
+                    <strong>{notification.typeLabel}</strong>
+                    <p>{notification.content}</p>
+                    <time>{formatNotificationTime(notification.createdAt)}</time>
+                  </div>
+                  <button
+                    type="button"
+                    className={canOpenChat ? 'small-icon-button' : 'text-button'}
+                    onClick={() => onNotificationAction(notification)}
+                    aria-label={canOpenChat ? '前往聊天室' : '標記已讀'}
+                    title={canOpenChat ? '前往聊天室' : '標記已讀'}
+                  >
+                    {canOpenChat ? <ChatIcon /> : '標記已讀'}
+                  </button>
+                </article>
+              );
+            })}
         </div>
       </div>
     </div>

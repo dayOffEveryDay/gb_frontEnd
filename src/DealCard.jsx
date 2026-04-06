@@ -12,10 +12,21 @@ function DealCard({
   onOpenGallery,
   onOpenChat,
   onOpenParticipation,
+  onOpenUserProfile,
   showJoinAction = true,
 }) {
   const isChatEnabled = typeof onOpenChat === 'function';
   const canManageParticipation = typeof onOpenParticipation === 'function';
+
+  const handleOpenUserProfile = (event) => {
+    event.stopPropagation();
+    onOpenUserProfile?.({
+      id: deal.host?.id,
+      displayName: deal.host?.displayName,
+      profileImageUrl: deal.host?.profileImageUrl,
+      creditScore: deal.host?.creditScore,
+    });
+  };
 
   return (
     <article
@@ -96,13 +107,20 @@ function DealCard({
         <div className="footer-item host-item">
           <span className="footer-label">{labels.leader}</span>
           <div className="host-summary">
-            <span className="host-avatar">
+            <button
+              type="button"
+              className="host-avatar host-avatar-button"
+              onClick={handleOpenUserProfile}
+              disabled={!deal.host?.id || !onOpenUserProfile}
+              aria-label={`查看 ${deal.host?.displayName ?? '使用者'} 的個人資料`}
+              title="查看個人資料"
+            >
               {deal.host?.profileImageUrl ? (
                 <img src={deal.host.profileImageUrl} alt={deal.host.displayName || 'host avatar'} className="avatar-image" />
               ) : (
                 <AvatarIcon />
               )}
-            </span>
+            </button>
             <strong>{deal.host?.displayName ?? labels.noValue}</strong>
           </div>
         </div>

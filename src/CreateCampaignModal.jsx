@@ -19,8 +19,9 @@ function CreateCampaignModal({
     return null;
   }
 
-  const showExpirePresets = true;
-  const showExpireCustomInput = campaignForm.expirePreset === 'custom';
+  const isScheduledCampaign = campaignForm.scenarioType === 'SCHEDULED';
+  const showExpirePresets = !isScheduledCampaign;
+  const showExpireCustomInput = isScheduledCampaign || campaignForm.expirePreset === 'custom';
 
   const syncExpirePreset = (value) => {
     setCampaignForm((current) => {
@@ -50,14 +51,33 @@ function CreateCampaignModal({
     });
   };
 
+  const handleScenarioTypeChange = (value) => {
+    setCampaignForm((current) => {
+      const nextForm = {
+        ...current,
+        scenarioType: value,
+        expirePreset: value === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m',
+      };
+
+      return {
+        ...nextForm,
+        meetupTime: getSuggestedMeetupTime(nextForm),
+      };
+    });
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="login-modal create-campaign-modal" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={onClose}>
-          {labels.close}
-        </button>
-        <p className="eyebrow">{labels.createDeal}</p>
+        <div className="modal-top-row">
+          <p className="eyebrow">{labels.createDeal}</p>
+          <button type="button" className="modal-close" onClick={onClose}>
+            {labels.close}
+          </button>
+        </div>
         <h2 className="modal-title">{labels.createCampaignTitle}</h2>
+        <p className="create-campaign-disclaimer">本平台僅供媒合</p>
+
         <div className="campaign-form">
           <label className="profile-field">
             <span>{labels.store}</span>
@@ -96,7 +116,7 @@ function CreateCampaignModal({
             <select
               required
               value={campaignForm.scenarioType}
-              onChange={(event) => setCampaignForm((current) => ({ ...current, scenarioType: event.target.value }))}
+              onChange={(event) => handleScenarioTypeChange(event.target.value)}
             >
               {typeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -129,8 +149,9 @@ function CreateCampaignModal({
                   ...current,
                   images: nextImages,
                 }));
+
                 if ((event.target.files?.length ?? 0) > 3) {
-                  setCreateCampaignError('圖片最多只能上傳 3 張，已自動保留前 3 張');
+                  setCreateCampaignError('圖片最多只能選擇 3 張，系統會只保留前 3 張。');
                 } else {
                   setCreateCampaignError('');
                 }
@@ -157,7 +178,9 @@ function CreateCampaignModal({
               min="1"
               required
               value={campaignForm.productTotalQuantity}
-              onChange={(event) => setCampaignForm((current) => ({ ...current, productTotalQuantity: event.target.value }))}
+              onChange={(event) =>
+                setCampaignForm((current) => ({ ...current, productTotalQuantity: event.target.value }))
+              }
             />
           </label>
 
@@ -214,11 +237,15 @@ function CreateCampaignModal({
               type="text"
               required
               value={campaignForm.meetupLocation}
-              onChange={(event) => setCampaignForm((current) => ({ ...current, meetupLocation: event.target.value }))}
+              onChange={(event) =>
+                setCampaignForm((current) => ({ ...current, meetupLocation: event.target.value }))
+              }
             />
           </label>
         </div>
+
         {createCampaignError && <p className="inline-error">{createCampaignError}</p>}
+
         <button type="button" className="save-button" onClick={onSubmit} disabled={isCreatingCampaign}>
           {isCreatingCampaign ? labels.savingCampaign : labels.saveCampaign}
         </button>

@@ -184,6 +184,15 @@ export function normalizeHost(host) {
 export function mapCampaign(campaign, index) {
   const images = resolveCampaignImageUrls(campaign);
   const fallbackImage = createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19);
+  const myParticipantStatus = (
+    campaign.myParticipantStatus ??
+    campaign.my_participant_status ??
+    campaign.participantStatus ??
+    campaign.participant_status ??
+    ''
+  )
+    .toString()
+    .toUpperCase();
 
   return {
     ...campaign,
@@ -197,8 +206,9 @@ export function mapCampaign(campaign, index) {
     meetupLocation: campaign.meetupLocation ?? campaign.meetup_location ?? '',
     meetupTime: campaign.meetupTime ?? campaign.meetup_time ?? '',
     expireTime: campaign.expireTime ?? campaign.expire_time ?? '',
+    myParticipantStatus,
     isHost: Boolean(campaign.host === true || campaign.isHost),
-    joined: Boolean(campaign.joined ?? campaign.isJoined),
+    joined: myParticipantStatus ? myParticipantStatus === 'JOINED' : Boolean(campaign.joined ?? campaign.isJoined),
     quantity: campaign.quantity ?? campaign.joinQuantity ?? campaign.join_quantity ?? 0,
     host: normalizeHost(campaign.host),
     imageUrls: images.length > 0 ? images : [fallbackImage],
@@ -227,6 +237,7 @@ export function addMinutes(value, minutes) {
 
 const HODUO_BUSINESS_START_MINUTES = 10 * 60;
 const HODUO_BUSINESS_END_MINUTES = 21 * 60;
+const HODUO_CLOSING_SOON_THRESHOLD_MINUTES = 30;
 
 export function isWithinHoduoBusinessHours(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
@@ -236,6 +247,19 @@ export function isWithinHoduoBusinessHours(value = new Date()) {
 
   const currentMinutes = date.getHours() * 60 + date.getMinutes();
   return currentMinutes >= HODUO_BUSINESS_START_MINUTES && currentMinutes < HODUO_BUSINESS_END_MINUTES;
+}
+
+export function isHoduoClosingSoon(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  const currentMinutes = date.getHours() * 60 + date.getMinutes();
+  return (
+    currentMinutes >= HODUO_BUSINESS_END_MINUTES - HODUO_CLOSING_SOON_THRESHOLD_MINUTES &&
+    currentMinutes < HODUO_BUSINESS_END_MINUTES
+  );
 }
 
 export function getInitialCampaignForm() {

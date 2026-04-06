@@ -1,10 +1,13 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
+import { useNavigate } from 'react-router-dom';
 import './App.css';
 import {
   cancelCampaign,
+  confirmCampaignReceipt,
   clearStoredAuth,
   createCampaign,
+  deliverCampaign,
   fetchCampaigns,
   fetchUnreadNotifications,
   fetchCategories,
@@ -19,15 +22,19 @@ import {
   getStoredUser,
   hostReviseCampaign,
   joinCampaign,
+  kickCampaignParticipant,
   LINE_LOGIN_SUCCESS_MESSAGE,
+  markParticipantNoShow,
   markNotificationRead,
   openLineLoginPopup,
+  raiseCampaignDispute,
   reviseCampaign,
   setStoredAuth,
+  unlockCampaignRevision,
   withdrawCampaign,
   updateCurrentUserProfile,
 } from './api';
-import { EXPIRE_PRESET_OPTIONS, LABELS, MY_CAMPAIGN_OPTIONS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
+import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
 import {
   formatCountdown,
   formatDateTime,
@@ -35,6 +42,7 @@ import {
   getInitialCampaignForm,
   getScenarioLabel,
   getTypeClass,
+  isHoduoClosingSoon,
   isWithinHoduoBusinessHours,
   mapCampaign,
   normalizeUser,
@@ -82,6 +90,63 @@ function getCampaignLifecycle(rawCampaign) {
   return 'ACTIVE';
 }
 
+function getMineCampaignBucket(rawCampaign) {
+  const statusSource = [
+    rawCampaign?.status,
+    rawCampaign?.campaignStatus,
+    rawCampaign?.campaign_status,
+    rawCampaign?.state,
+  ]
+    .find(Boolean)
+    ?.toString()
+    .toUpperCase();
+  const participantStatusSource = [
+    rawCampaign?.myParticipantStatus,
+    rawCampaign?.my_participant_status,
+    rawCampaign?.participantStatus,
+    rawCampaign?.participant_status,
+  ]
+    .find(Boolean)
+    ?.toString()
+    .toUpperCase();
+
+  const source = (rawCampaign?.mineSource ?? rawCampaign?.__mineSource ?? '').toString().toUpperCase();
+
+  if (source === 'HOSTED') {
+    if (['OPEN', 'FULL'].includes(statusSource)) {
+      return 'ACTIVE';
+    }
+
+    if (['DELIVERED', 'COMPLETED'].includes(statusSource)) {
+      return 'COMPLETED';
+    }
+
+    if (['CANCELLED', 'FAILED'].includes(statusSource)) {
+      return 'FAILED';
+    }
+
+    if (['HOST_NO_SHOW'].includes(statusSource)) {
+      return 'ISSUE';
+    }
+  }
+
+  if (source === 'JOINED') {
+    if (['JOINED'].includes(participantStatusSource)) {
+      return 'ACTIVE';
+    }
+
+    if (['CONFIRMED', 'COMPLETED'].includes(participantStatusSource)) {
+      return 'COMPLETED';
+    }
+
+    if (['DISPUTED', 'NO_SHOW'].includes(participantStatusSource)) {
+      return 'ISSUE';
+    }
+  }
+
+  return getCampaignLifecycle(rawCampaign);
+}
+
 function normalizeNotification(notification) {
   const type = notification.type ?? 'NOTICE';
   const typeLabelMap = {
@@ -93,12 +158,66 @@ function normalizeNotification(notification) {
   };
 
   return {
-    id: notification.id,
+    id: notification.id ?? notification.notificationId ?? notification.notification_id ?? null,
     type,
     typeLabel: typeLabelMap[type] ?? type,
     referenceId: notification.referenceId ?? notification.reference_id ?? null,
     content: notification.content ?? '',
     createdAt: notification.createdAt ?? notification.created_at ?? '',
+  };
+}
+
+function normalizeHostParticipant(participant, index = 0) {
+  return {
+    participantId: participant?.participantId ?? participant?.id ?? participant?.userId ?? participant?.user_id ?? null,
+    participantsId: participant?.participantsId ?? participant?.participants_id ?? null,
+    userId: participant?.userId ?? participant?.user_id ?? participant?.memberId ?? null,
+    displayName:
+      participant?.displayName ??
+      participant?.userDisplayName ??
+      participant?.user?.displayName ??
+      `團員 ${index + 1}`,
+    quantity: Number(participant?.quantity ?? participant?.joinedQuantity ?? participant?.joined_quantity ?? 0),
+    status:
+      participant?.status ??
+      participant?.participantStatus ??
+      participant?.participant_status ??
+      participant?.joinStatus ??
+      '',
+  };
+}
+
+function normalizeHostDashboard(dashboard) {
+  const participants = Array.isArray(dashboard?.participants)
+    ? dashboard.participants.map((participant, index) => normalizeHostParticipant(participant, index))
+    : [];
+
+  return {
+    ...dashboard,
+    status: dashboard?.status ?? '',
+    allowRevision: Boolean(dashboard?.allowRevision ?? dashboard?.allow_revision ?? false),
+    totalPhysicalQuantity: Number(dashboard?.totalPhysicalQuantity ?? dashboard?.total_physical_quantity ?? 0),
+    openQuantity: Number(dashboard?.openQuantity ?? dashboard?.open_quantity ?? 0),
+    hostReservedQuantity: Number(dashboard?.hostReservedQuantity ?? dashboard?.host_reserved_quantity ?? 0),
+    alreadySoldQuantity: Number(dashboard?.alreadySoldQuantity ?? dashboard?.already_sold_quantity ?? 0),
+    availableQuantity: Number(dashboard?.availableQuantity ?? dashboard?.available_quantity ?? 0),
+    participants,
+  };
+}
+
+function buildHostParticipationCampaign(deal, dashboard) {
+  const normalizedDashboard = normalizeHostDashboard(dashboard);
+
+  return {
+    ...deal,
+    managementMode: 'HOST',
+    dashboard: normalizedDashboard,
+    status: normalizedDashboard.status || deal.status,
+    allowRevision: normalizedDashboard.allowRevision,
+    totalPhysicalQuantity: normalizedDashboard.totalPhysicalQuantity,
+    hostReservedQuantity: normalizedDashboard.hostReservedQuantity,
+    openQuantity: normalizedDashboard.openQuantity,
+    alreadySoldQuantity: normalizedDashboard.alreadySoldQuantity,
   };
 }
 
@@ -120,8 +239,27 @@ function canOpenCampaignChat(campaign) {
   return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
 }
 
+function isFullCampaignNotification(notification) {
+  return notification?.type === 'CAMPAIGN_FULL' && notification?.referenceId != null;
+}
+
+const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
+
 function HomePage() {
-  const swipeTabs = [...TYPE_OPTIONS.map((option) => option.value), 'MINE'];
+  const navigate = useNavigate();
+  const swipeTabs = ['MINE', ...TYPE_OPTIONS.map((option) => option.value)];
+  const localizedMyCampaignScopes = [
+    { value: 'ALL', label: '全部' },
+    { value: 'HOSTED', label: '我的團購' },
+    { value: 'JOINED', label: '我參加的' },
+  ];
+  const localizedMyCampaignOptions = [
+    { value: 'ALL', label: '全部' },
+    { value: 'ACTIVE', label: '進行中' },
+    { value: 'COMPLETED', label: '已完成' },
+    { value: 'FAILED', label: '失敗' },
+    { value: 'ISSUE', label: '異常' },
+  ];
   const localizedExpirePresetOptions = EXPIRE_PRESET_OPTIONS.map((option) => {
     if (option.value === '10m') {
       return { ...option, label: '10 分鐘後' };
@@ -158,6 +296,7 @@ function HomePage() {
   const [isReferenceLoading, setIsReferenceLoading] = useState(true);
   const [activeType, setActiveType] = useState('INSTANT');
   const [activeCategory, setActiveCategory] = useState(0);
+  const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
   const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
   const [activeStore, setActiveStore] = useState(0);
   const [search, setSearch] = useState('');
@@ -175,6 +314,7 @@ function HomePage() {
   const [notifications, setNotifications] = useState([]);
   const [notificationsError, setNotificationsError] = useState('');
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+  const [liveNotification, setLiveNotification] = useState(null);
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -227,12 +367,89 @@ function HomePage() {
   const gestureLockRef = useRef('');
   const autoMeetupTimeRef = useRef('');
   const notificationClientRef = useRef(null);
+  const liveNotificationTimerRef = useRef(null);
+  const pendingProfileReturnRef = useRef(null);
+  const profileRestoreAppliedRef = useRef(false);
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     localStorage.setItem('theme_mode', themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    return () => {
+      if (liveNotificationTimerRef.current) {
+        window.clearTimeout(liveNotificationTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (profileRestoreAppliedRef.current) {
+      return;
+    }
+
+    profileRestoreAppliedRef.current = true;
+
+    try {
+      const raw = sessionStorage.getItem(PROFILE_RETURN_CONTEXT_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const context = JSON.parse(raw);
+      pendingProfileReturnRef.current = context;
+      sessionStorage.removeItem(PROFILE_RETURN_CONTEXT_KEY);
+
+      if (context?.ui) {
+        if (context.ui.activeType) {
+          setActiveType(context.ui.activeType);
+        }
+        if (typeof context.ui.activeCategory === 'number') {
+          setActiveCategory(context.ui.activeCategory);
+        }
+        if (typeof context.ui.activeStore === 'number') {
+          setActiveStore(context.ui.activeStore);
+        }
+        if (context.ui.activeMyCampaignFilter) {
+          setActiveMyCampaignFilter(context.ui.activeMyCampaignFilter);
+        }
+        if (context.ui.activeMyCampaignScope) {
+          setActiveMyCampaignScope(context.ui.activeMyCampaignScope);
+        }
+        if (typeof context.ui.search === 'string') {
+          setSearch(context.ui.search);
+        }
+      }
+
+      if (context?.source === 'chat' && context?.campaign) {
+        setChatCampaign(context.campaign);
+      }
+    } catch {
+      sessionStorage.removeItem(PROFILE_RETURN_CONTEXT_KEY);
+      pendingProfileReturnRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const pendingContext = pendingProfileReturnRef.current;
+    if (!pendingContext || isInitialLoading) {
+      return;
+    }
+
+    if (pendingContext.source === 'chat' && pendingContext.campaign && !chatCampaign) {
+      return;
+    }
+
+    const targetScrollY = Number(pendingContext.scrollY ?? 0);
+    const timerId = window.setTimeout(() => {
+      window.scrollTo({ top: Math.max(targetScrollY, 0), behavior: 'auto' });
+      pendingProfileReturnRef.current = null;
+    }, 60);
+
+    return () => window.clearTimeout(timerId);
+  }, [campaigns, chatCampaign, isInitialLoading]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -368,11 +585,33 @@ function HomePage() {
           onConnect: () => {
             client.subscribe('/user/queue/notifications', (frame) => {
               try {
-                const nextNotification = normalizeNotification(JSON.parse(frame.body));
-                setNotifications((current) => {
-                  const filtered = current.filter((item) => item.id !== nextNotification.id);
-                  return [nextNotification, ...filtered];
-                });
+                const incomingNotification = normalizeNotification(JSON.parse(frame.body));
+
+                if (!disposed) {
+                  setLiveNotification(incomingNotification);
+
+                  if (liveNotificationTimerRef.current) {
+                    window.clearTimeout(liveNotificationTimerRef.current);
+                  }
+
+                  liveNotificationTimerRef.current = window.setTimeout(() => {
+                    setLiveNotification(null);
+                    liveNotificationTimerRef.current = null;
+                  }, 5000);
+                }
+
+                fetchUnreadNotifications(token)
+                  .then((data) => {
+                    if (!disposed) {
+                      setNotifications(Array.isArray(data) ? data.map(normalizeNotification) : []);
+                      setNotificationsError('');
+                    }
+                  })
+                  .catch((error) => {
+                    if (!disposed) {
+                      setNotificationsError(error.message);
+                    }
+                  });
               } catch {
                 setNotificationsError('通知資料解析失敗');
               }
@@ -457,42 +696,44 @@ function HomePage() {
             return;
           }
 
-          let items = [];
+          const [hostedData, joinedData] = await Promise.all([
+            fetchMyHostedCampaigns(mineQuery, token),
+            fetchMyJoinedCampaigns(mineQuery, token),
+          ]);
 
-          if (activeMyCampaignFilter === 'HOSTED') {
-            const data = await fetchMyHostedCampaigns(mineQuery, token);
-            items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-          } else if (activeMyCampaignFilter === 'JOINED') {
-            const data = await fetchMyJoinedCampaigns(mineQuery, token);
-            items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-          } else {
-            const [hostedData, joinedData] = await Promise.all([
-              fetchMyHostedCampaigns(mineQuery, token),
-              fetchMyJoinedCampaigns(mineQuery, token),
-            ]);
+          const hostedItems = (Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : []).map(
+            (campaign) => ({
+              ...campaign,
+              mineSource: 'HOSTED',
+            })
+          );
+          const joinedItems = (Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : []).map(
+            (campaign) => ({
+              ...campaign,
+              mineSource: 'JOINED',
+            })
+          );
+          const mergedCampaigns = [...hostedItems, ...joinedItems];
+          const campaignMap = new Map();
 
-            const hostedItems = Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : [];
-            const joinedItems = Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : [];
-            const mergedCampaigns = [...hostedItems, ...joinedItems];
-            const campaignMap = new Map();
-
-            mergedCampaigns.forEach((campaign, index) => {
-              const key =
-                campaign.id ??
-                campaign.campaignId ??
-                `${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
-              if (!campaignMap.has(key)) {
-                campaignMap.set(key, campaign);
-              }
-            });
-
-            items = Array.from(campaignMap.values());
-
-            if (activeMyCampaignFilter === 'COMPLETED') {
-              items = items.filter((campaign) => getCampaignLifecycle(campaign) === 'COMPLETED');
-            } else if (activeMyCampaignFilter === 'CANCELLED') {
-              items = items.filter((campaign) => getCampaignLifecycle(campaign) === 'CANCELLED');
+          mergedCampaigns.forEach((campaign, index) => {
+            const key =
+              campaign.id ??
+              campaign.campaignId ??
+              `${campaign.mineSource ?? 'campaign'}-${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
+            if (!campaignMap.has(key)) {
+              campaignMap.set(key, campaign);
             }
+          });
+
+          let items = Array.from(campaignMap.values());
+
+          if (activeMyCampaignScope !== 'ALL') {
+            items = items.filter((campaign) => campaign.mineSource === activeMyCampaignScope);
+          }
+
+          if (activeMyCampaignFilter !== 'ALL') {
+            items = items.filter((campaign) => getMineCampaignBucket(campaign) === activeMyCampaignFilter);
           }
 
           if (cancelled) {
@@ -542,7 +783,7 @@ function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [activeCategory, activeMyCampaignFilter, activeStore, activeType, deferredSearch, refreshKey, token]);
+  }, [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, refreshKey, token]);
 
   useEffect(() => {
     if (!isRefreshing) {
@@ -610,7 +851,14 @@ function HomePage() {
       return;
     }
 
-    setIsProfileOpen((open) => !open);
+    handleOpenUserProfile(
+      {
+        id: user?.id,
+        displayName: user?.displayName,
+        profileImageUrl: user?.profileImageUrl,
+      },
+      'profile'
+    );
   };
 
   const handleLineLogin = () => {
@@ -635,14 +883,86 @@ function HomePage() {
     setIsCreateCampaignOpen(false);
   };
 
-  const handleReadNotification = async (notificationId) => {
+  const markNotificationAsRead = async (notificationId) => {
     if (!token) {
+      return;
+    }
+
+    if (notificationId == null) {
+      setNotificationsError('通知 ID 缺失，無法標記已讀');
       return;
     }
 
     try {
       await markNotificationRead(notificationId, token);
       setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    } catch (error) {
+      setNotificationsError(error.message);
+    }
+  };
+
+  const markCampaignChatNotificationsAsRead = async (campaignId) => {
+    const matchedNotifications = notifications.filter(
+      (notification) =>
+        isFullCampaignNotification(notification) && Number(notification.referenceId) === Number(campaignId)
+    );
+
+    if (matchedNotifications.length === 0) {
+      return;
+    }
+
+    await Promise.all(matchedNotifications.map((notification) => markNotificationAsRead(notification.id)));
+  };
+
+  const findCampaignForNotification = async (campaignId) => {
+    const normalizedCampaignId = Number(campaignId);
+    const currentCampaign = campaigns.find((campaign) => Number(campaign.id) === normalizedCampaignId);
+
+    if (currentCampaign) {
+      return currentCampaign;
+    }
+
+    const query = { page: 0, size: 100 };
+    const [hostedData, joinedData] = await Promise.all([
+      fetchMyHostedCampaigns(query, token),
+      fetchMyJoinedCampaigns(query, token),
+    ]);
+
+    const hostedItems = Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : [];
+    const joinedItems = Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : [];
+    const matchedCampaign = [...hostedItems, ...joinedItems].find(
+      (campaign) => Number(campaign.id ?? campaign.campaignId) === normalizedCampaignId
+    );
+
+    return matchedCampaign ? mapCampaign(matchedCampaign) : null;
+  };
+
+  const handleNotificationAction = async (notification) => {
+    if (!token || !notification) {
+      return;
+    }
+
+    if (!isFullCampaignNotification(notification)) {
+      await markNotificationAsRead(notification.id);
+      return;
+    }
+
+    try {
+      const targetCampaign = await findCampaignForNotification(notification.referenceId);
+
+      if (!targetCampaign) {
+        setNotificationsError('找不到這筆團購，無法開啟聊天室。');
+        return;
+      }
+
+      if (!canOpenCampaignChat(targetCampaign)) {
+        setNotificationsError('這筆團購目前無法開啟聊天室。');
+        return;
+      }
+
+      await markCampaignChatNotificationsAsRead(targetCampaign.id);
+      setIsNotificationsOpen(false);
+      setChatCampaign(targetCampaign);
     } catch (error) {
       setNotificationsError(error.message);
     }
@@ -866,11 +1186,12 @@ function HomePage() {
       return;
     }
 
-    if (campaignForm.scenarioType === 'INSTANT' && !isWithinHoduoBusinessHours()) {
-      const message = '\u73fe\u5728\u975e\u597d\u591a\u71df\u696d\u6642\u9593\uff0c\u8acb\u6539\u9810\u8cfc\u6a21\u5f0f\u3002';
-      setCreateCampaignError(message);
-      window.alert(message);
-      return;
+    if (campaignForm.scenarioType === 'INSTANT') {
+      if (!isWithinHoduoBusinessHours()) {
+        window.alert('現在非營業時間，但仍可建立即時團。');
+      } else if (isHoduoClosingSoon()) {
+        window.alert('賣場即將打烊，請留意截止與面交時間。');
+      }
     }
 
     const requiredChecks = [
@@ -1084,7 +1405,36 @@ function HomePage() {
     });
   };
 
-  const handleOpenChat = (deal) => {
+  const handleOpenUserProfile = (profileUser, source = 'card') => {
+    if (!profileUser?.id) {
+      return;
+    }
+
+    sessionStorage.setItem(
+      PROFILE_RETURN_CONTEXT_KEY,
+      JSON.stringify({
+        source,
+        scrollY: window.scrollY,
+        ui: {
+          activeType,
+          activeCategory,
+          activeStore,
+          activeMyCampaignScope,
+          activeMyCampaignFilter,
+          search,
+        },
+        campaign: source === 'chat' ? chatCampaign : null,
+      })
+    );
+
+    navigate(`/users/${profileUser.id}`, {
+      state: {
+        user: profileUser,
+      },
+    });
+  };
+
+  const handleOpenChat = async (deal) => {
     if (!token) {
       setIsLoginModalOpen(true);
       return;
@@ -1094,7 +1444,20 @@ function HomePage() {
       return;
     }
 
+    await markCampaignChatNotificationsAsRead(deal.id);
     setChatCampaign(deal);
+  };
+
+  const handleOpenParticipationFromChat = async (deal) => {
+    await handleOpenParticipation(deal);
+    setChatCampaign(null);
+  };
+
+  const handleOpenChatFromParticipation = async (deal) => {
+    setParticipationCampaign(null);
+    setParticipationQuantityDraft('1');
+    setParticipationError('');
+    await handleOpenChat(deal);
   };
 
   const handleOpenParticipation = async (deal) => {
@@ -1110,26 +1473,31 @@ function HomePage() {
 
       if (isHostDeal) {
         const dashboard = await fetchHostDashboard(deal.id, token);
+        const nextCampaign = buildHostParticipationCampaign(deal, dashboard);
 
-        setParticipationCampaign({
-          ...deal,
-          managementMode: 'HOST',
-          dashboard,
-          totalPhysicalQuantity: Number(dashboard?.totalPhysicalQuantity ?? 0),
-          hostReservedQuantity: Number(dashboard?.hostReservedQuantity ?? 0),
-          openQuantity: Number(dashboard?.openQuantity ?? 0),
-          alreadySoldQuantity: Number(dashboard?.alreadySoldQuantity ?? 0),
-        });
-        setParticipationQuantityDraft(String(Number(dashboard?.hostReservedQuantity ?? 0)));
+        setParticipationCampaign(nextCampaign);
+        setParticipationQuantityDraft(String(nextCampaign.hostReservedQuantity));
         return;
       }
 
       const participation = await fetchMyParticipation(deal.id, token);
+      const participantStatus = (
+        participation?.myParticipantStatus ??
+        participation?.my_participant_status ??
+        deal?.myParticipantStatus ??
+        deal?.my_participant_status ??
+        participation?.participantStatus ??
+        participation?.participant_status ??
+        ''
+      )
+        .toString()
+        .toUpperCase();
       const mergedDeal = {
         ...deal,
         managementMode: 'JOINED',
         isHost: Boolean(participation?.host ?? deal.isHost),
-        joined: Boolean(participation?.joined ?? deal.joined ?? Number(deal.quantity) > 0),
+        myParticipantStatus: participantStatus || deal?.myParticipantStatus || '',
+        joined: participantStatus ? participantStatus === 'JOINED' : Boolean(participation?.joined ?? deal.joined ?? Number(deal.quantity) > 0),
         quantity: Number(participation?.quantity ?? deal.quantity ?? 0),
       };
 
@@ -1153,6 +1521,263 @@ function HomePage() {
     setParticipationCampaign(null);
     setParticipationQuantityDraft('1');
     setParticipationError('');
+  };
+
+  const handleConfirmCampaignReceipt = async (campaignId) => {
+    if (!token) {
+      return { success: false, message: '請先登入後再確認收貨' };
+    }
+
+    try {
+      const response = await confirmCampaignReceipt(campaignId, token);
+
+      setCampaigns((current) =>
+        current.map((campaign) =>
+          Number(campaign.id) === Number(campaignId)
+            ? {
+                ...campaign,
+                status: 'CONFIRMED',
+              }
+            : campaign
+        )
+      );
+
+      setParticipationCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              status: 'CONFIRMED',
+            }
+          : current
+      );
+
+      return {
+        success: true,
+        message: response?.message ?? '已確認收到商品',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : '確認收到失敗',
+      };
+    }
+  };
+
+  const handleDeliverCampaign = async (campaignId) => {
+    if (!token) {
+      return { success: false, message: '請先登入後再標記已面交' };
+    }
+
+    try {
+      const response = await deliverCampaign(campaignId, token);
+
+      setCampaigns((current) =>
+        current.map((campaign) =>
+          Number(campaign.id) === Number(campaignId)
+            ? {
+                ...campaign,
+                status: 'DELIVERED',
+              }
+            : campaign
+        )
+      );
+
+      setChatCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              status: 'DELIVERED',
+            }
+          : current
+      );
+
+      setParticipationCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              status: 'DELIVERED',
+              dashboard: current.dashboard
+                ? {
+                    ...current.dashboard,
+                    status: 'DELIVERED',
+                  }
+                : current.dashboard,
+            }
+          : current
+      );
+
+      return {
+        success: true,
+        message: response?.message ?? '已標記面交完成',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : '標記面交失敗',
+      };
+    }
+  };
+
+  const handleRaiseCampaignDispute = async (campaignId, reason) => {
+    if (!token) {
+      return { success: false, message: '請先登入後再提出仲裁' };
+    }
+
+    try {
+      const response = await raiseCampaignDispute(campaignId, token, reason);
+
+      setCampaigns((current) =>
+        current.map((campaign) =>
+          Number(campaign.id) === Number(campaignId)
+            ? {
+                ...campaign,
+                myParticipantStatus: 'DISPUTED',
+              }
+            : campaign
+        )
+      );
+
+      setChatCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              myParticipantStatus: 'DISPUTED',
+            }
+          : current
+      );
+
+      setParticipationCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              myParticipantStatus: 'DISPUTED',
+            }
+          : current
+      );
+
+      return {
+        success: true,
+        message: response?.message ?? '已提出仲裁',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : '提出仲裁失敗',
+      };
+    }
+  };
+
+  const refreshHostParticipationCampaign = async (campaignId) => {
+    const dashboard = await fetchHostDashboard(campaignId, token);
+
+    setParticipationCampaign((current) => {
+      if (!current || current.id !== campaignId) {
+        return current;
+      }
+
+      return buildHostParticipationCampaign(current, dashboard);
+    });
+
+    const normalizedDashboard = normalizeHostDashboard(dashboard);
+    setParticipationQuantityDraft(String(normalizedDashboard.hostReservedQuantity));
+    return normalizedDashboard;
+  };
+
+  const handleUnlockCampaign = async (campaignId) => {
+    if (!token || !campaignId) {
+      return {
+        success: false,
+        message: '缺少團購或登入資訊，無法開啟修改。',
+      };
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      const response = await unlockCampaignRevision(campaignId, token);
+      await refreshHostParticipationCampaign(campaignId);
+      setRefreshKey((current) => current + 1);
+
+      return {
+        success: true,
+        message: response?.message ?? '已開啟滿單後修改',
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '開啟滿單後修改失敗';
+      setParticipationError(message);
+      return {
+        success: false,
+        message,
+      };
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
+  };
+
+  const handleKickParticipant = async (participant) => {
+    const campaignId = participationCampaign?.id;
+    const participantId = participant?.participantId ?? participant?.userId ?? participant?.id ?? null;
+    const campaignStatus = (participationCampaign?.dashboard?.status ?? participationCampaign?.status ?? '').toString().toUpperCase();
+    const reason = campaignStatus === 'DELIVERED' ? '找不到人' : undefined;
+
+    if (!token || !campaignId || !participantId) {
+      setParticipationError('缺少團員資訊，無法剔除。');
+      return;
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      await kickCampaignParticipant(campaignId, participantId, token, reason);
+      await refreshHostParticipationCampaign(campaignId);
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setParticipationError(error instanceof Error ? error.message : '剔除團員失敗');
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
+  };
+
+  const handleParticipantStatusAction = async (payload) => {
+    const participant = payload?.participant ?? payload;
+    const inputReason = payload?.reason ?? '';
+    const campaignId = participationCampaign?.id;
+    const participantId =
+      participant?.participantId ??
+      participant?.participantsId ??
+      participant?.participants_id ??
+      participant?.id ??
+      null;
+    const userId = participant?.userId ?? participant?.user_id ?? participant?.memberId ?? null;
+    const campaignStatus = (participationCampaign?.dashboard?.status ?? participationCampaign?.status ?? '')
+      .toString()
+      .toUpperCase();
+    const reason = inputReason.trim();
+
+    if (!token || !campaignId || (campaignStatus === 'DELIVERED' ? !userId : !participantId)) {
+      setParticipationError('缺少成員資訊，無法處理。');
+      return;
+    }
+
+    setIsSubmittingParticipation(true);
+    setParticipationError('');
+
+    try {
+      if (campaignStatus === 'DELIVERED') {
+        await markParticipantNoShow(campaignId, userId, token, reason || '找不到人');
+      } else {
+        await kickCampaignParticipant(campaignId, participantId, token, reason || undefined);
+      }
+
+      await refreshHostParticipationCampaign(campaignId);
+      setRefreshKey((current) => current + 1);
+    } catch (error) {
+      setParticipationError(error instanceof Error ? error.message : '處理成員狀態失敗');
+    } finally {
+      setIsSubmittingParticipation(false);
+    }
   };
 
   const handleSubmitParticipation = async () => {
@@ -1298,6 +1923,24 @@ function HomePage() {
         isRefreshing={isRefreshing}
       />
 
+      {liveNotification && (
+        <button
+          type="button"
+          className="live-notification-toast"
+          onClick={() => {
+            setIsNotificationsOpen(true);
+            setLiveNotification(null);
+            if (liveNotificationTimerRef.current) {
+              window.clearTimeout(liveNotificationTimerRef.current);
+              liveNotificationTimerRef.current = null;
+            }
+          }}
+        >
+          <strong>{liveNotification.typeLabel}</strong>
+          <span>{liveNotification.content}</span>
+        </button>
+      )}
+
       <LoginModal
         labels={LABELS}
         isOpen={isLoginModalOpen}
@@ -1328,7 +1971,7 @@ function HomePage() {
         isLoading={isNotificationsLoading}
         error={notificationsError}
         onClose={() => setIsNotificationsOpen(false)}
-        onReadNotification={handleReadNotification}
+        onNotificationAction={handleNotificationAction}
       />
 
       <CreateCampaignModal
@@ -1380,11 +2023,16 @@ function HomePage() {
       />
 
       <CampaignChatModal
-        key={chatCampaign?.id ?? 'closed-chat'}
         isOpen={Boolean(chatCampaign)}
         campaign={chatCampaign}
         token={token}
         currentUser={user}
+        onUnlockRevision={handleUnlockCampaign}
+        onOpenParticipation={handleOpenParticipationFromChat}
+        onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'chat')}
+        onDeliverCampaign={handleDeliverCampaign}
+        onConfirmReceipt={handleConfirmCampaignReceipt}
+        onRaiseDispute={handleRaiseCampaignDispute}
         onClose={() => setChatCampaign(null)}
       />
 
@@ -1399,65 +2047,95 @@ function HomePage() {
         onSubmit={handleSubmitParticipation}
         onWithdraw={handleWithdrawParticipation}
         onCancelCampaign={handleCancelHostedCampaign}
+        onUnlockRevision={handleUnlockCampaign}
+        onKickParticipant={handleParticipantStatusAction}
+        onOpenChat={handleOpenChatFromParticipation}
+        canOpenChat={canOpenCampaignChat(participationCampaign)}
       />
 
       <main className="content">
-        <div className="type-switch-shell">
-          <section className="type-switch">
-            {TYPE_OPTIONS.map((option) => (
+        {activeType === 'MINE' ? (
+          <section className="mine-page-header">
+            <p className="eyebrow">個人頁</p>
+          </section>
+        ) : (
+          <div className="type-switch-shell">
+            <section className="type-switch">
+              {TYPE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={activeType === option.value ? 'mode-button active' : 'mode-button'}
+                  onClick={() => setActiveType(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </section>
+          </div>
+        )}
+
+        {activeType === 'MINE' ? (
+          <div className="mine-filter-stack">
+            <section className="category-strip">
+              {localizedMyCampaignScopes.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={activeMyCampaignScope === option.value ? 'category-button active' : 'category-button'}
+                  onClick={() => setActiveMyCampaignScope(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </section>
+            <section className="mine-status-inline-filter">
+              <span className="mine-status-filter-label">狀態</span>
+              <div className="mine-status-filter-options">
+                {localizedMyCampaignOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={activeMyCampaignFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
+                    onClick={() => setActiveMyCampaignFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+            <label className="mine-status-filter">
+              <span className="mine-status-filter-label">狀態</span>
+              <select value={activeMyCampaignFilter} onChange={(event) => setActiveMyCampaignFilter(event.target.value)}>
+                {localizedMyCampaignOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : (
+          <section className="category-strip">
+            <button
+              type="button"
+              className={activeCategory === 0 ? 'category-button active' : 'category-button'}
+              onClick={() => setActiveCategory(0)}
+            >
+              {LABELS.all}
+            </button>
+            {categories.map((category) => (
               <button
-                key={option.value}
+                key={category.id}
                 type="button"
-                className={activeType === option.value ? 'mode-button active' : 'mode-button'}
-                onClick={() => setActiveType(option.value)}
+                className={activeCategory === category.id ? 'category-button active' : 'category-button'}
+                onClick={() => setActiveCategory(category.id)}
               >
-                {option.label}
+                {category.icon ? `${category.icon} ${category.name}` : category.name}
               </button>
             ))}
           </section>
-          <button
-            type="button"
-            className={activeType === 'MINE' ? 'mode-button mine-entry active' : 'mode-button mine-entry'}
-            onClick={() => setActiveType('MINE')}
-          >
-            {LABELS.mine}
-          </button>
-        </div>
-
-        <section className="category-strip">
-          {activeType === 'MINE' ? (
-            MY_CAMPAIGN_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={activeMyCampaignFilter === option.value ? 'category-button active' : 'category-button'}
-                onClick={() => setActiveMyCampaignFilter(option.value)}
-              >
-                {option.label}
-              </button>
-            ))
-          ) : (
-            <>
-              <button
-                type="button"
-                className={activeCategory === 0 ? 'category-button active' : 'category-button'}
-                onClick={() => setActiveCategory(0)}
-              >
-                {LABELS.all}
-              </button>
-              {categories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  className={activeCategory === category.id ? 'category-button active' : 'category-button'}
-                  onClick={() => setActiveCategory(category.id)}
-                >
-                  {category.icon ? `${category.icon} ${category.name}` : category.name}
-                </button>
-              ))}
-            </>
-          )}
-        </section>
+        )}
 
         {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
         {referenceError && <p className="inline-error">{referenceError}</p>}
@@ -1486,6 +2164,7 @@ function HomePage() {
                   ? handleOpenParticipation
                   : undefined
               }
+              onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
               showJoinAction={activeType !== 'MINE' && deal.host?.id !== user?.id}
             />
           ))}

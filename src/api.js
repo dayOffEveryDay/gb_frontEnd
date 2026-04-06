@@ -305,8 +305,38 @@ export function hostReviseCampaign(campaignId, payload, token) {
   });
 }
 
+export function unlockCampaignRevision(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/unlock`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function kickCampaignParticipant(campaignId, participantId, token, reason) {
+  return request(`/api/v1/campaigns/${campaignId}/participants/${participantId}/kick`, {
+    method: 'POST',
+    body: reason ? { reason } : undefined,
+    token,
+  });
+}
+
+export function markParticipantNoShow(campaignId, userId, token, note) {
+  return request(`/api/v1/campaigns/${campaignId}/participants/${userId}/no-show`, {
+    method: 'PUT',
+    body: note ? { note } : undefined,
+    token,
+  });
+}
+
 export function cancelCampaign(campaignId, token) {
   return request(`/api/v1/campaigns/${campaignId}/cancel`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function deliverCampaign(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/deliver`, {
     method: 'POST',
     token,
   });
@@ -319,10 +349,45 @@ export function withdrawCampaign(campaignId, token) {
   });
 }
 
+export function confirmCampaignReceipt(campaignId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/confirm`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function raiseCampaignDispute(campaignId, token, reason) {
+  return request(`/api/v1/campaigns/${campaignId}/dispute`, {
+    method: 'POST',
+    body: reason ? { reason } : undefined,
+    token,
+  });
+}
+
 export function updateCurrentUserProfile(payload, token) {
   return request('/api/v1/users/me', {
     method: 'PUT',
     body: payload,
+    token,
+  });
+}
+
+export function fetchUserProfile(userId, token) {
+  return request(`/api/v1/users/${userId}/profile`, {
+    token,
+  });
+}
+
+export function blockUser(userId, token) {
+  return request(`/api/v1/users/${userId}/block`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function unblockUser(userId, token) {
+  return request(`/api/v1/users/${userId}/block`, {
+    method: 'DELETE',
     token,
   });
 }

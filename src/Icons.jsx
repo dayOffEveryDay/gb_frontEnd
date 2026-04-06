@@ -45,3 +45,11 @@ export function MoreIcon() {
     </svg>
   );
 }
+
+export function GhostIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2c-4.42 0-8 3.58-8 8v10l3-2 2 2 3-2 3 2 2-2 3 2V10c0-4.42-3.58-8-8-8Zm-3 9.5a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm6 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5ZM8 14.5c.88 1 2.28 1.5 4 1.5s3.12-.5 4-1.5" />
+    </svg>
+  );
+}
