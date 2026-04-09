@@ -2056,7 +2056,7 @@ function HomePage() {
       <main className="content">
         {activeType === 'MINE' ? (
           <section className="mine-page-header">
-            <p className="eyebrow">個人頁</p>
+            <p className="eyebrow">我的團購</p>
           </section>
         ) : (
           <div className="type-switch-shell">

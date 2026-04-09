@@ -378,6 +378,34 @@ export function fetchUserProfile(userId, token) {
   });
 }
 
+export function fetchMyBlockedUsers(params, token) {
+  return request('/api/v1/users/me/blocks', {
+    query: params,
+    token,
+  });
+}
+
+export function followHost(hostId, token) {
+  return request(`/api/v1/follows/${hostId}`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function unfollowHost(hostId, token) {
+  return request(`/api/v1/follows/${hostId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export function fetchMyFollowingUsers(params, token) {
+  return request('/api/v1/follows/me', {
+    query: params,
+    token,
+  });
+}
+
 export function blockUser(userId, token) {
   return request(`/api/v1/users/${userId}/block`, {
     method: 'POST',

@@ -1897,6 +1897,11 @@
   padding: 6px 4px 0;
 }
 
+.user-profile-header .eyebrow {
+  font-size: 18px;
+  font-weight: 800;
+}
+
 .user-profile-card,
 .user-profile-actions {
   padding: 24px;
@@ -1953,6 +1958,12 @@
 .user-profile-actions {
   display: grid;
   gap: 12px;
+}
+
+.user-profile-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .user-profile-stats {
@@ -2066,6 +2077,120 @@
   color: var(--ink-soft);
   font-size: 14px;
   line-height: 1.45;
+}
+
+.user-profile-relation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.user-profile-relation-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+}
+
+.user-profile-relation-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-profile-relation-avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-alt);
+}
+
+.user-profile-relation-avatar svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.user-profile-relation-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.user-profile-relation-copy strong,
+.user-profile-relation-copy span {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-profile-relation-copy span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.user-profile-relation-actions {
+  position: relative;
+  justify-self: end;
+  align-self: start;
+}
+
+.user-profile-menu-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-profile-menu-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.user-profile-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 144px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  box-shadow: 0 14px 30px rgba(8, 16, 32, 0.18);
+  z-index: 2;
+}
+
+.user-profile-action-menu-item {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.user-profile-action-menu-item.danger {
+  color: #ef4444;
 }
 
 .danger-button {
@@ -2330,10 +2455,23 @@
     padding: 18px;
   }
 
+  .user-profile-action-row,
   .user-profile-campaign-card {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: 1fr;
+  }
+
+  .user-profile-campaign-card {
     gap: 12px;
     padding: 12px;
+  }
+
+  .user-profile-relation-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .user-profile-relation-actions {
+    justify-self: end;
   }
 
   .user-profile-campaign-copy h3 {
