@@ -181,6 +181,10 @@ export function normalizeHost(host) {
   };
 }
 
+export function isViewableParticipantStatus(status) {
+  return ['JOINED', 'CONFIRMED', 'DELIVERED', 'COMPLETED'].includes((status ?? '').toString().toUpperCase());
+}
+
 export function mapCampaign(campaign, index) {
   const images = resolveCampaignImageUrls(campaign);
   const fallbackImage = createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19);
@@ -208,8 +212,16 @@ export function mapCampaign(campaign, index) {
     expireTime: campaign.expireTime ?? campaign.expire_time ?? '',
     myParticipantStatus,
     isHost: Boolean(campaign.host === true || campaign.isHost),
-    joined: myParticipantStatus ? myParticipantStatus === 'JOINED' : Boolean(campaign.joined ?? campaign.isJoined),
-    quantity: campaign.quantity ?? campaign.joinQuantity ?? campaign.join_quantity ?? 0,
+    joined: myParticipantStatus
+      ? isViewableParticipantStatus(myParticipantStatus)
+      : Boolean(campaign.joined ?? campaign.isJoined),
+    quantity:
+      campaign.quantity ??
+      campaign.joinQuantity ??
+      campaign.join_quantity ??
+      campaign.joinedQuantity ??
+      campaign.joined_quantity ??
+      0,
     host: normalizeHost(campaign.host),
     imageUrls: images.length > 0 ? images : [fallbackImage],
     image: images[0] ?? fallbackImage,
@@ -277,7 +289,7 @@ export function getInitialCampaignForm() {
     productTotalQuantity: '',
     openQuantity: '',
     meetupLocation: '',
-    expirePreset: '10m',
+    expirePreset: 'custom',
     expireTime: formatLocalInputValue(expire),
     meetupTime: formatLocalInputValue(meetup),
   };
@@ -301,6 +313,14 @@ export function formatLocalDateTime(value) {
 }
 
 export function resolveExpireDate(form, baseTime = Date.now()) {
+  if (form?.scenarioType === 'SCHEDULED') {
+    if (!form.expireTime) {
+      return null;
+    }
+
+    return parseLocalDateTime(form.expireTime);
+  }
+
   const preset = EXPIRE_PRESET_OPTIONS.find((option) => option.value === form.expirePreset);
   if (preset?.minutes) {
     return addMinutes(new Date(baseTime), preset.minutes);

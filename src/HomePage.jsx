@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import { useNavigate } from 'react-router-dom';
 import './App.css';
@@ -61,6 +61,7 @@ import DealCard from './DealCard';
 import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
+import ReviewModal from './ReviewModal';
 
 function getCampaignLifecycle(rawCampaign) {
   const statusSource = [
@@ -88,6 +89,10 @@ function getCampaignLifecycle(rawCampaign) {
   }
 
   return 'ACTIVE';
+}
+
+function isViewableParticipantStatus(status) {
+  return ['JOINED', 'CONFIRMED', 'DELIVERED', 'COMPLETED'].includes((status ?? '').toString().toUpperCase());
 }
 
 function getMineCampaignBucket(rawCampaign) {
@@ -145,6 +150,27 @@ function getMineCampaignBucket(rawCampaign) {
   }
 
   return getCampaignLifecycle(rawCampaign);
+}
+
+function canOpenReadonlyParticipationFromDeal(deal) {
+  const source = (deal?.mineSource ?? deal?.__mineSource ?? '').toString().toUpperCase();
+  const participantStatus = (
+    deal?.myParticipantStatus ??
+    deal?.my_participant_status ??
+    deal?.participantStatus ??
+    deal?.participant_status ??
+    ''
+  )
+    .toString()
+    .toUpperCase();
+  const quantity = Number(deal?.quantity ?? deal?.joinQuantity ?? deal?.join_quantity ?? deal?.joinedQuantity ?? deal?.joined_quantity ?? 0);
+
+  return (
+    source === 'JOINED' &&
+    getMineCampaignBucket(deal) === 'COMPLETED' &&
+    isViewableParticipantStatus(participantStatus) &&
+    quantity > 0
+  );
 }
 
 function normalizeNotification(notification) {
@@ -205,6 +231,49 @@ function normalizeHostDashboard(dashboard) {
   };
 }
 
+function getCampaignListSignature(items) {
+  return JSON.stringify(Array.isArray(items) ? items : []);
+}
+
+function buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter) {
+  const hostedItems = (Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : []).map(
+    (campaign) => ({
+      ...campaign,
+      mineSource: 'HOSTED',
+    })
+  );
+  const joinedItems = (Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : []).map(
+    (campaign) => ({
+      ...campaign,
+      mineSource: 'JOINED',
+    })
+  );
+  const mergedCampaigns = [...hostedItems, ...joinedItems];
+  const campaignMap = new Map();
+
+  mergedCampaigns.forEach((campaign, index) => {
+    const key =
+      campaign.id ??
+      campaign.campaignId ??
+      `${campaign.mineSource ?? 'campaign'}-${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
+    if (!campaignMap.has(key)) {
+      campaignMap.set(key, campaign);
+    }
+  });
+
+  let items = Array.from(campaignMap.values());
+
+  if (activeMyCampaignScope !== 'ALL') {
+    items = items.filter((campaign) => campaign.mineSource === activeMyCampaignScope);
+  }
+
+  if (activeMyCampaignFilter !== 'ALL') {
+    items = items.filter((campaign) => getMineCampaignBucket(campaign) === activeMyCampaignFilter);
+  }
+
+  return items.map(mapCampaign);
+}
+
 function buildHostParticipationCampaign(deal, dashboard) {
   const normalizedDashboard = normalizeHostDashboard(dashboard);
 
@@ -241,6 +310,10 @@ function canOpenCampaignChat(campaign) {
 
 function isFullCampaignNotification(notification) {
   return notification?.type === 'CAMPAIGN_FULL' && notification?.referenceId != null;
+}
+
+function isReviewCampaignNotification(notification) {
+  return notification?.type === 'CAMPAIGN_COMPLETED' && notification?.referenceId != null;
 }
 
 const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
@@ -338,6 +411,7 @@ function HomePage() {
   const [participationQuantityDraft, setParticipationQuantityDraft] = useState('1');
   const [participationError, setParticipationError] = useState('');
   const [isSubmittingParticipation, setIsSubmittingParticipation] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState(null);
   const [chatCampaign, setChatCampaign] = useState(null);
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
@@ -365,17 +439,21 @@ function HomePage() {
   const swipeStartXRef = useRef(null);
   const canPullRef = useRef(false);
   const gestureLockRef = useRef('');
-  const autoMeetupTimeRef = useRef('');
   const notificationClientRef = useRef(null);
   const liveNotificationTimerRef = useRef(null);
   const pendingProfileReturnRef = useRef(null);
   const profileRestoreAppliedRef = useRef(false);
+  const campaignsSignatureRef = useRef('[]');
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     localStorage.setItem('theme_mode', themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    campaignsSignatureRef.current = getCampaignListSignature(campaigns);
+  }, [campaigns]);
 
   useEffect(() => {
     return () => {
@@ -478,20 +556,17 @@ function HomePage() {
 
   useEffect(() => {
     setCampaignForm((current) => {
-      const nextExpirePreset = current.expirePreset || '10m';
+      const nextExpirePreset = current.scenarioType === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m';
       const nextSuggestedMeetupTime = getSuggestedMeetupTime({ ...current, expirePreset: nextExpirePreset });
 
-      const shouldSyncMeetupTime = !current.meetupTime || current.meetupTime === autoMeetupTimeRef.current;
-      autoMeetupTimeRef.current = nextSuggestedMeetupTime;
-
-      if (current.expirePreset === nextExpirePreset && (!shouldSyncMeetupTime || current.meetupTime === nextSuggestedMeetupTime)) {
+      if (current.expirePreset === nextExpirePreset && current.meetupTime === nextSuggestedMeetupTime) {
         return current;
       }
 
       return {
         ...current,
         expirePreset: nextExpirePreset,
-        meetupTime: shouldSyncMeetupTime ? nextSuggestedMeetupTime : current.meetupTime,
+        meetupTime: nextSuggestedMeetupTime,
       };
     });
   }, [campaignForm.scenarioType, campaignForm.expirePreset, campaignForm.expireTime]);
@@ -672,11 +747,11 @@ function HomePage() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadCampaignPage = async () => {
-      setIsInitialLoading(true);
+  const loadCampaignPage = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) {
+        setIsInitialLoading(true);
+      }
       setCampaignError('');
 
       try {
@@ -687,12 +762,10 @@ function HomePage() {
           };
 
           if (!token) {
-            if (!cancelled) {
-              setCampaigns([]);
-              setPage(0);
-              setHasMore(false);
-              setCampaignError(LABELS.loginRequiredForMine);
-            }
+            setCampaigns([]);
+            setPage(0);
+            setHasMore(false);
+            setCampaignError(LABELS.loginRequiredForMine);
             return;
           }
 
@@ -700,47 +773,17 @@ function HomePage() {
             fetchMyHostedCampaigns(mineQuery, token),
             fetchMyJoinedCampaigns(mineQuery, token),
           ]);
-
-          const hostedItems = (Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : []).map(
-            (campaign) => ({
-              ...campaign,
-              mineSource: 'HOSTED',
-            })
+          const nextCampaigns = buildMineCampaigns(
+            hostedData,
+            joinedData,
+            activeMyCampaignScope,
+            activeMyCampaignFilter
           );
-          const joinedItems = (Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : []).map(
-            (campaign) => ({
-              ...campaign,
-              mineSource: 'JOINED',
-            })
-          );
-          const mergedCampaigns = [...hostedItems, ...joinedItems];
-          const campaignMap = new Map();
+          const nextSignature = getCampaignListSignature(nextCampaigns);
 
-          mergedCampaigns.forEach((campaign, index) => {
-            const key =
-              campaign.id ??
-              campaign.campaignId ??
-              `${campaign.mineSource ?? 'campaign'}-${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
-            if (!campaignMap.has(key)) {
-              campaignMap.set(key, campaign);
-            }
-          });
-
-          let items = Array.from(campaignMap.values());
-
-          if (activeMyCampaignScope !== 'ALL') {
-            items = items.filter((campaign) => campaign.mineSource === activeMyCampaignScope);
+          if (nextSignature !== campaignsSignatureRef.current) {
+            setCampaigns(nextCampaigns);
           }
-
-          if (activeMyCampaignFilter !== 'ALL') {
-            items = items.filter((campaign) => getMineCampaignBucket(campaign) === activeMyCampaignFilter);
-          }
-
-          if (cancelled) {
-            return;
-          }
-
-          setCampaigns(items.map(mapCampaign));
           setPage(0);
           setHasMore(false);
           return;
@@ -754,36 +797,63 @@ function HomePage() {
           keyword: deferredSearch.trim() || undefined,
         });
 
-        if (cancelled) {
-          return;
-        }
-
         const items = Array.isArray(data?.content)
           ? data.content.map(mapCampaign).filter((item) => item.scenarioType === activeType && item.availableQuantity > 0)
           : [];
+        const nextSignature = getCampaignListSignature(items);
 
-        setCampaigns(items);
+        if (nextSignature !== campaignsSignatureRef.current) {
+          setCampaigns(items);
+        }
         setPage(0);
         setHasMore(Boolean(data) && !data.last);
       } catch (error) {
-        if (!cancelled) {
-          setCampaignError(error.message);
+        setCampaignError(error.message);
+        if (!silent) {
           setCampaigns([]);
           setHasMore(false);
         }
       } finally {
-        if (!cancelled) {
+        if (!silent) {
           setIsInitialLoading(false);
         }
       }
-    };
+    },
+    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, token]
+  );
 
-    loadCampaignPage();
+  useEffect(() => {
+    void loadCampaignPage();
+  }, [loadCampaignPage, refreshKey]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, refreshKey, token]);
+  const refreshMineCampaignsBeforeOpen = useCallback(
+    async (deal) => {
+      if (activeType !== 'MINE' || !token || !deal?.id) {
+        return deal;
+      }
+
+      const mineQuery = {
+        page: 0,
+        size: PAGE_SIZE,
+      };
+      const [hostedData, joinedData] = await Promise.all([
+        fetchMyHostedCampaigns(mineQuery, token),
+        fetchMyJoinedCampaigns(mineQuery, token),
+      ]);
+      const nextCampaigns = buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter);
+      const nextSignature = getCampaignListSignature(nextCampaigns);
+
+      if (nextSignature !== campaignsSignatureRef.current) {
+        setCampaigns(nextCampaigns);
+      }
+
+      return (
+        nextCampaigns.find((campaign) => Number(campaign.id) === Number(deal.id)) ??
+        deal
+      );
+    },
+    [activeMyCampaignFilter, activeMyCampaignScope, activeType, token]
+  );
 
   useEffect(() => {
     if (!isRefreshing) {
@@ -928,8 +998,18 @@ function HomePage() {
       fetchMyJoinedCampaigns(query, token),
     ]);
 
-    const hostedItems = Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : [];
-    const joinedItems = Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : [];
+    const hostedItems = (Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : []).map(
+      (campaign) => ({
+        ...campaign,
+        mineSource: 'HOSTED',
+      })
+    );
+    const joinedItems = (Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : []).map(
+      (campaign) => ({
+        ...campaign,
+        mineSource: 'JOINED',
+      })
+    );
     const matchedCampaign = [...hostedItems, ...joinedItems].find(
       (campaign) => Number(campaign.id ?? campaign.campaignId) === normalizedCampaignId
     );
@@ -942,7 +1022,10 @@ function HomePage() {
       return;
     }
 
-    if (!isFullCampaignNotification(notification)) {
+    const isChatNotification = isFullCampaignNotification(notification);
+    const isReviewNotification = isReviewCampaignNotification(notification);
+
+    if (!isChatNotification && !isReviewNotification) {
       await markNotificationAsRead(notification.id);
       return;
     }
@@ -952,6 +1035,35 @@ function HomePage() {
 
       if (!targetCampaign) {
         setNotificationsError('找不到這筆團購，無法開啟聊天室。');
+        return;
+      }
+
+      if (isReviewNotification) {
+        await markNotificationAsRead(notification.id);
+        setIsNotificationsOpen(false);
+
+        if ((targetCampaign.mineSource ?? '').toString().toUpperCase() === 'HOSTED') {
+          const dashboard = await fetchHostDashboard(targetCampaign.id, token);
+          const nextCampaign = buildHostParticipationCampaign(
+            { ...targetCampaign, initialHostView: 'participants' },
+            dashboard
+          );
+          setParticipationCampaign({ ...nextCampaign, initialHostView: 'participants' });
+          setParticipationQuantityDraft(String(nextCampaign.hostReservedQuantity));
+          return;
+        }
+
+        if (targetCampaign.host?.id != null) {
+          handleOpenReview({
+            campaignId: targetCampaign.id,
+            revieweeId: targetCampaign.host.id,
+            revieweeName: targetCampaign.host.displayName,
+            source: 'participant',
+          });
+          return;
+        }
+
+        setNotificationsError('找不到可評價的對象');
         return;
       }
 
@@ -1008,7 +1120,6 @@ function HomePage() {
     }
 
     setCreateCampaignError('');
-    autoMeetupTimeRef.current = '';
     setCampaignForm((current) => ({
       ...getInitialCampaignForm(),
       storeId: current.storeId || stores[0]?.id?.toString() || '',
@@ -1033,20 +1144,24 @@ function HomePage() {
       return undefined;
     }
 
-    const refreshIntervalMs = activeType === 'INSTANT' ? 15000 : 30000;
+    if (activeType === 'MINE') {
+      return undefined;
+    }
+
+    const refreshIntervalMs = activeType === 'SCHEDULED' ? 60000 : 15000;
 
     const refreshIfVisible = () => {
       if (document.visibilityState !== 'visible') {
         return;
       }
 
-      refreshHome();
+      void loadCampaignPage({ silent: true });
     };
 
     const intervalId = window.setInterval(refreshIfVisible, refreshIntervalMs);
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshHome();
+        void loadCampaignPage({ silent: true });
       }
     };
     const handleWindowFocus = () => {
@@ -1061,7 +1176,7 @@ function HomePage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [activeType, refreshHome]);
+  }, [activeType, loadCampaignPage]);
 
   const switchActiveTypeBySwipe = (direction) => {
     if (window.innerWidth >= 700) {
@@ -1440,12 +1555,19 @@ function HomePage() {
       return;
     }
 
-    if (!canOpenCampaignChat(deal)) {
+    let nextDeal = deal;
+    try {
+      nextDeal = await refreshMineCampaignsBeforeOpen(deal);
+    } catch (error) {
+      setCampaignError(error instanceof Error ? error.message : '團購資料刷新失敗');
+    }
+
+    if (!canOpenCampaignChat(nextDeal)) {
       return;
     }
 
-    await markCampaignChatNotificationsAsRead(deal.id);
-    setChatCampaign(deal);
+    await markCampaignChatNotificationsAsRead(nextDeal.id);
+    setChatCampaign(nextDeal);
   };
 
   const handleOpenParticipationFromChat = async (deal) => {
@@ -1460,6 +1582,19 @@ function HomePage() {
     await handleOpenChat(deal);
   };
 
+  const handleOpenReview = (target) => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setReviewTarget(target ?? null);
+  };
+
+  const handleCloseReview = () => {
+    setReviewTarget(null);
+  };
+
   const handleOpenParticipation = async (deal) => {
     if (!token) {
       setIsLoginModalOpen(true);
@@ -1468,24 +1603,48 @@ function HomePage() {
 
     setParticipationError('');
 
+    const openParticipationFromDeal = (nextDeal) => {
+      const readonlyQuantity = Number(
+        nextDeal?.quantity ??
+          nextDeal?.joinQuantity ??
+          nextDeal?.join_quantity ??
+          nextDeal?.joinedQuantity ??
+          nextDeal?.joined_quantity ??
+          0
+      );
+
+      setParticipationCampaign({
+        ...nextDeal,
+        managementMode: 'JOINED',
+        isHost: false,
+        joined: true,
+        quantity: readonlyQuantity,
+        isReadonlyParticipation: canOpenReadonlyParticipationFromDeal(nextDeal),
+      });
+      setParticipationQuantityDraft(String(readonlyQuantity));
+    };
+
     try {
-      const isHostDeal = deal.host?.id === user?.id || deal.isHost;
+      const nextDeal = await refreshMineCampaignsBeforeOpen(deal);
+      const isHostDeal = nextDeal.host?.id === user?.id || nextDeal.isHost;
 
       if (isHostDeal) {
-        const dashboard = await fetchHostDashboard(deal.id, token);
-        const nextCampaign = buildHostParticipationCampaign(deal, dashboard);
+        const dashboard = await fetchHostDashboard(nextDeal.id, token);
+        const nextCampaign = buildHostParticipationCampaign(nextDeal, dashboard);
 
         setParticipationCampaign(nextCampaign);
         setParticipationQuantityDraft(String(nextCampaign.hostReservedQuantity));
         return;
       }
 
-      const participation = await fetchMyParticipation(deal.id, token);
+      openParticipationFromDeal(nextDeal);
+
+      const participation = await fetchMyParticipation(nextDeal.id, token);
       const participantStatus = (
         participation?.myParticipantStatus ??
         participation?.my_participant_status ??
-        deal?.myParticipantStatus ??
-        deal?.my_participant_status ??
+        nextDeal?.myParticipantStatus ??
+        nextDeal?.my_participant_status ??
         participation?.participantStatus ??
         participation?.participant_status ??
         ''
@@ -1493,12 +1652,36 @@ function HomePage() {
         .toString()
         .toUpperCase();
       const mergedDeal = {
-        ...deal,
+        ...nextDeal,
         managementMode: 'JOINED',
-        isHost: Boolean(participation?.host ?? deal.isHost),
-        myParticipantStatus: participantStatus || deal?.myParticipantStatus || '',
-        joined: participantStatus ? participantStatus === 'JOINED' : Boolean(participation?.joined ?? deal.joined ?? Number(deal.quantity) > 0),
-        quantity: Number(participation?.quantity ?? deal.quantity ?? 0),
+        isHost: Boolean(participation?.host ?? nextDeal.isHost),
+        myParticipantStatus: participantStatus || nextDeal?.myParticipantStatus || '',
+        isReadonlyParticipation:
+          getMineCampaignBucket({
+            ...nextDeal,
+            myParticipantStatus: participantStatus || nextDeal?.myParticipantStatus || '',
+            participantStatus,
+            quantity:
+              participation?.quantity ??
+              participation?.joinedQuantity ??
+              participation?.joined_quantity ??
+              nextDeal.quantity ??
+              nextDeal.joinQuantity ??
+              nextDeal.join_quantity ??
+              0,
+          }) === 'COMPLETED',
+        joined: participantStatus
+          ? isViewableParticipantStatus(participantStatus)
+          : Boolean(participation?.joined ?? nextDeal.joined ?? Number(nextDeal.quantity) > 0),
+        quantity: Number(
+          participation?.quantity ??
+            participation?.joinedQuantity ??
+            participation?.joined_quantity ??
+            nextDeal.quantity ??
+            nextDeal.joinQuantity ??
+            nextDeal.join_quantity ??
+            0
+        ),
       };
 
       if (mergedDeal.isHost || !mergedDeal.joined || mergedDeal.quantity <= 0) {
@@ -1715,7 +1898,7 @@ function HomePage() {
     }
   };
 
-  const handleKickParticipant = async (participant) => {
+  const _handleKickParticipant = async (participant) => {
     const campaignId = participationCampaign?.id;
     const participantId = participant?.participantId ?? participant?.userId ?? participant?.id ?? null;
     const campaignStatus = (participationCampaign?.dashboard?.status ?? participationCampaign?.status ?? '').toString().toUpperCase();
@@ -2033,10 +2216,12 @@ function HomePage() {
         onDeliverCampaign={handleDeliverCampaign}
         onConfirmReceipt={handleConfirmCampaignReceipt}
         onRaiseDispute={handleRaiseCampaignDispute}
+        onOpenReview={handleOpenReview}
         onClose={() => setChatCampaign(null)}
       />
 
       <ParticipationActionModal
+        key={participationCampaign ? `${participationCampaign.id}-${participationCampaign.initialHostView ?? 'overview'}` : 'participation-modal'}
         isOpen={Boolean(participationCampaign)}
         campaign={participationCampaign}
         quantityDraft={participationQuantityDraft}
@@ -2049,8 +2234,17 @@ function HomePage() {
         onCancelCampaign={handleCancelHostedCampaign}
         onUnlockRevision={handleUnlockCampaign}
         onKickParticipant={handleParticipantStatusAction}
+        onOpenReview={handleOpenReview}
         onOpenChat={handleOpenChatFromParticipation}
         canOpenChat={canOpenCampaignChat(participationCampaign)}
+      />
+
+      <ReviewModal
+        isOpen={Boolean(reviewTarget)}
+        token={token}
+        reviewTarget={reviewTarget}
+        onClose={handleCloseReview}
+        onSubmitted={handleCloseReview}
       />
 
       <main className="content">

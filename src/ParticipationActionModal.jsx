@@ -14,32 +14,18 @@ function ParticipationActionModal({
   onCancelCampaign,
   onUnlockRevision,
   onKickParticipant,
+  onOpenReview,
   onOpenChat,
   canOpenChat,
 }) {
   const [isCancelConfirming, setIsCancelConfirming] = useState(false);
   const [pendingKickParticipant, setPendingKickParticipant] = useState(null);
   const [kickReasonDraft, setKickReasonDraft] = useState('');
-  const [activeHostView, setActiveHostView] = useState('overview');
+  const [activeHostView, setActiveHostView] = useState(() =>
+    campaign?.initialHostView === 'participants' ? 'participants' : 'overview'
+  );
   const swipeStartXRef = useRef(null);
   const swipeStartYRef = useRef(null);
-
-  if (!isOpen || !campaign) {
-    return null;
-  }
-
-  const isHostMode = campaign.managementMode === 'HOST';
-  const dashboard = campaign.dashboard ?? {};
-  const participants = Array.isArray(dashboard.participants) ? dashboard.participants : [];
-  const hasJoinedParticipants = participants.length > 0 || Number(dashboard.alreadySoldQuantity ?? 0) > 0;
-  const status = (dashboard.status ?? campaign.status ?? '').toString().toUpperCase();
-  const allowRevision = Boolean(dashboard.allowRevision ?? campaign.allowRevision);
-  const canUnlockRevision = isHostMode && status.includes('FULL') && !allowRevision;
-  const isDeliveredStatus = status === 'DELIVERED';
-
-  const cancelMessage = hasJoinedParticipants
-    ? '\u76ee\u524d\u5df2\u6709\u5718\u54e1\u53c3\u8207\uff0c\u53d6\u6d88\u5718\u8cfc\u6703\u4e00\u4f75\u901a\u77e5\u6240\u6709\u5718\u54e1\u4e26\u95dc\u9589\u5f8c\u7e8c\u64cd\u4f5c\u3002'
-    : '\u53d6\u6d88\u5f8c\u9019\u7b46\u5718\u8cfc\u6703\u76f4\u63a5\u95dc\u9589\u3002';
 
   const handleClose = () => {
     setIsCancelConfirming(false);
@@ -96,6 +82,25 @@ function ParticipationActionModal({
     setKickReasonDraft('');
     setActiveHostView('overview');
   };
+
+  if (!isOpen || !campaign) {
+    return null;
+  }
+
+  const isHostMode = campaign.managementMode === 'HOST';
+  const dashboard = campaign.dashboard ?? {};
+  const participants = Array.isArray(dashboard.participants) ? dashboard.participants : [];
+  const hasJoinedParticipants = participants.length > 0 || Number(dashboard.alreadySoldQuantity ?? 0) > 0;
+  const status = (dashboard.status ?? campaign.status ?? '').toString().toUpperCase();
+  const allowRevision = Boolean(dashboard.allowRevision ?? campaign.allowRevision);
+  const canUnlockRevision = isHostMode && status.includes('FULL') && !allowRevision;
+  const isDeliveredStatus = status === 'DELIVERED';
+  const isParticipantReadOnly = !isHostMode && Boolean(campaign.isReadonlyParticipation || status === 'COMPLETED');
+  const canReviewParticipants = isHostMode && ['DELIVERED', 'CONFIRMED', 'COMPLETED'].includes(status);
+
+  const cancelMessage = hasJoinedParticipants
+    ? '\u76ee\u524d\u5df2\u6709\u5718\u54e1\u53c3\u8207\uff0c\u53d6\u6d88\u5718\u8cfc\u6703\u4e00\u4f75\u901a\u77e5\u6240\u6709\u5718\u54e1\u4e26\u95dc\u9589\u5f8c\u7e8c\u64cd\u4f5c\u3002'
+    : '\u53d6\u6d88\u5f8c\u9019\u7b46\u5718\u8cfc\u6703\u76f4\u63a5\u95dc\u9589\u3002';
 
   const handleTouchStart = (event) => {
     const touch = event.touches?.[0];
@@ -275,20 +280,40 @@ function ParticipationActionModal({
                                     {participant.quantity} {'\u4ef6 / '} {participant.status || 'JOINED'}
                                   </strong>
                                 </div>
-                                {canKickParticipant && (
-                                  <button
-                                    type="button"
-                                    className="text-button danger participation-kick-button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleKickClick(participant);
-                                    }}
-                                    disabled={isSubmitting || !participantKey}
-                                    title={`${isDeliveredStatus ? '\u6a19\u8a18\u672a\u5230\u5834' : '\u5254\u9664'} ${participant.displayName ?? '\u5718\u54e1'}`}
-                                  >
-                                    {isDeliveredStatus ? <GhostIcon /> : '\ud83d\uddd1'}
-                                  </button>
-                                )}
+                                <div className="participation-member-actions">
+                                  {canReviewParticipants && onOpenReview && participant?.userId != null && (
+                                    <button
+                                      type="button"
+                                      className="text-button participation-review-button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        onOpenReview({
+                                          campaignId: campaign.id,
+                                          revieweeId: participant.userId,
+                                          revieweeName: participant.displayName,
+                                          source: 'host',
+                                        });
+                                      }}
+                                      disabled={isSubmitting}
+                                    >
+                                      評價
+                                    </button>
+                                  )}
+                                  {canKickParticipant && (
+                                    <button
+                                      type="button"
+                                      className="text-button danger participation-kick-button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleKickClick(participant);
+                                      }}
+                                      disabled={isSubmitting || !participantKey}
+                                      title={`${isDeliveredStatus ? '\u6a19\u8a18\u672a\u5230\u5834' : '\u5254\u9664'} ${participant.displayName ?? '\u5718\u54e1'}`}
+                                    >
+                                      {isDeliveredStatus ? <GhostIcon /> : '\ud83d\uddd1'}
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </div>
                             {isKickRevealed && (
@@ -377,15 +402,24 @@ function ParticipationActionModal({
                 min="1"
                 value={quantityDraft}
                 onChange={(event) => onChangeQuantity(event.target.value)}
+                disabled={isSubmitting || isParticipantReadOnly}
               />
             </label>
+            {isParticipantReadOnly && (
+              <p className="panel-note">{'\u6b64\u5718\u8cfc\u5df2\u5b8c\u6210\uff0c\u50c5\u53ef\u67e5\u770b\u8a8d\u8cfc\u8cc7\u8a0a\u3002'}</p>
+            )}
           </div>
         )}
 
         {error && <p className="inline-error">{error}</p>}
 
         <div className="participation-actions">
-          <button type="button" className="save-button" onClick={onSubmit} disabled={isSubmitting}>
+          <button
+            type="button"
+            className="save-button"
+            onClick={onSubmit}
+            disabled={isSubmitting || isParticipantReadOnly}
+          >
             {isSubmitting ? '\u8655\u7406\u4e2d...' : isHostMode ? '\u5132\u5b58\u4e3b\u63ea\u8abf\u6574' : '\u66f4\u65b0\u8a8d\u8cfc\u6578\u91cf'}
           </button>
           {isHostMode ? (
@@ -398,7 +432,12 @@ function ParticipationActionModal({
               {isCancelConfirming ? '\u8fd4\u56de\u53d6\u6d88\u78ba\u8a8d' : '\u53d6\u6d88\u6574\u7b46\u5718\u8cfc'}
             </button>
           ) : (
-            <button type="button" className="text-button danger" onClick={onWithdraw} disabled={isSubmitting}>
+            <button
+              type="button"
+              className="text-button danger"
+              onClick={onWithdraw}
+              disabled={isSubmitting || isParticipantReadOnly}
+            >
               {'\u9000\u51fa\u5718\u8cfc'}
             </button>
           )}

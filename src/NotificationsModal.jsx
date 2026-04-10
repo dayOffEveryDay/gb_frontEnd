@@ -48,6 +48,8 @@ function NotificationsModal({
             !error &&
             notifications.map((notification) => {
               const canOpenChat = notification.type === 'CAMPAIGN_FULL' && notification.referenceId != null;
+              const canOpenReview = notification.type === 'CAMPAIGN_COMPLETED' && notification.referenceId != null;
+              const hasAction = canOpenChat || canOpenReview;
 
               return (
                 <article key={notification.id ?? `${notification.type}-${notification.createdAt}`} className="notification-item">
@@ -60,10 +62,10 @@ function NotificationsModal({
                     type="button"
                     className={canOpenChat ? 'small-icon-button' : 'text-button'}
                     onClick={() => onNotificationAction(notification)}
-                    aria-label={canOpenChat ? '前往聊天室' : '標記已讀'}
-                    title={canOpenChat ? '前往聊天室' : '標記已讀'}
+                    aria-label={canOpenChat ? '前往聊天室' : canOpenReview ? '前往評價' : '標記已讀'}
+                    title={canOpenChat ? '前往聊天室' : canOpenReview ? '前往評價' : '標記已讀'}
                   >
-                    {canOpenChat ? <ChatIcon /> : '標記已讀'}
+                    {canOpenChat ? <ChatIcon /> : hasAction ? '前往評價' : '標記已讀'}
                   </button>
                 </article>
               );

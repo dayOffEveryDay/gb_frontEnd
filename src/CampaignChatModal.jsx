@@ -74,6 +74,7 @@ function CampaignChatModal({
   onDeliverCampaign,
   onConfirmReceipt,
   onRaiseDispute,
+  onOpenReview,
   onClose,
 }) {
   const [messages, setMessages] = useState(null);
@@ -118,6 +119,11 @@ function CampaignChatModal({
     participantStatus !== 'DISPUTED' &&
     !hasConfirmedReceipt;
   const showConfirmedBadge = !isHost && (campaignStatus === 'CONFIRMED' || hasConfirmedReceipt);
+  const canReviewAsParticipant =
+    !isHost &&
+    !['NO_SHOW', 'DISPUTED'].includes(participantStatus) &&
+    ['CONFIRMED', 'COMPLETED'].includes(participantStatus || campaignStatus);
+  const canReviewAsHost = isHost && ['DELIVERED', 'CONFIRMED', 'COMPLETED'].includes(campaignStatus);
 
   useEffect(() => {
     setHasConfirmedReceipt(false);
@@ -403,6 +409,37 @@ function CampaignChatModal({
             <span className="chat-status-pill">已確認收到</span>
           ) : (
             <span>{campaign.meetupLocation || '討論'}</span>
+          )}
+        </div>
+
+        <div className="chat-meta-row">
+          <span className="chat-status-pill">{`面交地點：${campaign.meetupLocation || '討論'}`}</span>
+
+          {canReviewAsParticipant && campaign?.host?.id != null && (
+            <button
+              type="button"
+              className="chat-status-action"
+              onClick={() =>
+                onOpenReview?.({
+                  campaignId,
+                  revieweeId: campaign.host.id,
+                  revieweeName: campaign.host.displayName,
+                  source: 'participant',
+                })
+              }
+            >
+              評價主揪
+            </button>
+          )}
+
+          {canReviewAsHost && (
+            <button
+              type="button"
+              className="chat-status-action"
+              onClick={() => onOpenParticipation?.({ ...campaign, initialHostView: 'participants' })}
+            >
+              評價團員
+            </button>
           )}
         </div>
 

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getSuggestedMeetupTime } from './homeUtils';
 
 function CreateCampaignModal({
@@ -15,6 +16,33 @@ function CreateCampaignModal({
   onSubmit,
   setCreateCampaignError,
 }) {
+  const [activePreviewIndex, setActivePreviewIndex] = useState(0);
+  const previewTouchStartXRef = useRef(null);
+
+  const imagePreviews = useMemo(
+    () =>
+      (campaignForm.images ?? []).map((file) => ({
+        file,
+        url: URL.createObjectURL(file),
+      })),
+    [campaignForm.images]
+  );
+
+  useEffect(() => {
+    return () => {
+      imagePreviews.forEach(({ url }) => URL.revokeObjectURL(url));
+    };
+  }, [imagePreviews]);
+
+  useEffect(() => {
+    if (imagePreviews.length === 0) {
+      setActivePreviewIndex(0);
+      return;
+    }
+
+    setActivePreviewIndex((current) => Math.min(current, imagePreviews.length - 1));
+  }, [imagePreviews.length]);
+
   if (!isOpen) {
     return null;
   }
@@ -22,6 +50,7 @@ function CreateCampaignModal({
   const isScheduledCampaign = campaignForm.scenarioType === 'SCHEDULED';
   const showExpirePresets = !isScheduledCampaign;
   const showExpireCustomInput = isScheduledCampaign || campaignForm.expirePreset === 'custom';
+  const activePreview = imagePreviews[activePreviewIndex] ?? null;
 
   const syncExpirePreset = (value) => {
     setCampaignForm((current) => {
@@ -66,6 +95,85 @@ function CreateCampaignModal({
     });
   };
 
+  const reorderImages = (fromIndex, toIndex) => {
+    setCampaignForm((current) => {
+      const nextImages = [...(current.images ?? [])];
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= nextImages.length ||
+        toIndex >= nextImages.length ||
+        fromIndex === toIndex
+      ) {
+        return current;
+      }
+
+      const [movedImage] = nextImages.splice(fromIndex, 1);
+      nextImages.splice(toIndex, 0, movedImage);
+
+      return {
+        ...current,
+        images: nextImages,
+      };
+    });
+  };
+
+  const removeImage = (targetIndex) => {
+    setCampaignForm((current) => ({
+      ...current,
+      images: (current.images ?? []).filter((_, index) => index !== targetIndex),
+    }));
+    setCreateCampaignError('');
+    setActivePreviewIndex((current) => Math.max(0, Math.min(current, imagePreviews.length - 2)));
+  };
+
+  const moveImageToFront = (targetIndex) => {
+    reorderImages(targetIndex, 0);
+    setActivePreviewIndex(0);
+  };
+
+  const movePreviewLeft = () => {
+    if (imagePreviews.length <= 1) {
+      return;
+    }
+
+    setActivePreviewIndex((current) => (current - 1 + imagePreviews.length) % imagePreviews.length);
+  };
+
+  const movePreviewRight = () => {
+    if (imagePreviews.length <= 1) {
+      return;
+    }
+
+    setActivePreviewIndex((current) => (current + 1) % imagePreviews.length);
+  };
+
+  const handlePreviewTouchStart = (event) => {
+    previewTouchStartXRef.current = event.touches?.[0]?.clientX ?? null;
+  };
+
+  const handlePreviewTouchEnd = (event) => {
+    const startX = previewTouchStartXRef.current;
+    const endX = event.changedTouches?.[0]?.clientX ?? null;
+    previewTouchStartXRef.current = null;
+
+    if (startX == null || endX == null) {
+      return;
+    }
+
+    const deltaX = endX - startX;
+    if (Math.abs(deltaX) < 40) {
+      return;
+    }
+
+    if (deltaX < 0) {
+      movePreviewRight();
+      return;
+    }
+
+    movePreviewLeft();
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="login-modal create-campaign-modal" onClick={(event) => event.stopPropagation()}>
@@ -76,7 +184,7 @@ function CreateCampaignModal({
           </button>
         </div>
         <h2 className="modal-title">{labels.createCampaignTitle}</h2>
-        <p className="create-campaign-disclaimer">本平台僅供媒合</p>
+        <p className="create-campaign-disclaimer">請上傳清楚商品照片，避免造成誤解。</p>
 
         <div className="campaign-form">
           <label className="profile-field">
@@ -149,15 +257,82 @@ function CreateCampaignModal({
                   ...current,
                   images: nextImages,
                 }));
+                setActivePreviewIndex(0);
 
                 if ((event.target.files?.length ?? 0) > 3) {
-                  setCreateCampaignError('圖片最多只能選擇 3 張，系統會只保留前 3 張。');
+                  setCreateCampaignError('圖片最多只能選 3 張，系統只會保留前 3 張。');
                 } else {
                   setCreateCampaignError('');
                 }
               }}
             />
-            <span className="field-hint">可複選，最多 3 張</span>
+            <span className="field-hint">可複選，最多 3 張。預覽一次只顯示一張，可左右切換。</span>
+            {activePreview && (
+              <div className="image-preview-card">
+                <div
+                  className="image-preview-frame"
+                  onTouchStart={handlePreviewTouchStart}
+                  onTouchEnd={handlePreviewTouchEnd}
+                >
+                  <img src={activePreview.url} alt={`${activePreview.file.name} preview`} className="image-preview-thumb" />
+                  <span className="image-preview-badge">{activePreviewIndex === 0 ? '封面' : `第 ${activePreviewIndex + 1} 張`}</span>
+                  {imagePreviews.length > 1 && (
+                    <>
+                      <button type="button" className="image-preview-nav prev" onClick={movePreviewLeft} aria-label="上一張">
+                        ‹
+                      </button>
+                      <button type="button" className="image-preview-nav next" onClick={movePreviewRight} aria-label="下一張">
+                        ›
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="image-preview-meta">
+                  <strong title={activePreview.file.name}>{activePreview.file.name}</strong>
+                  <span>{Math.round(activePreview.file.size / 1024)} KB</span>
+                  {imagePreviews.length > 1 && (
+                    <span className="image-preview-counter">
+                      {activePreviewIndex + 1} / {imagePreviews.length}
+                    </span>
+                  )}
+                </div>
+                <div className="image-preview-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => moveImageToFront(activePreviewIndex)}
+                    disabled={activePreviewIndex === 0}
+                  >
+                    設為封面
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      reorderImages(activePreviewIndex, activePreviewIndex - 1);
+                      setActivePreviewIndex((current) => Math.max(current - 1, 0));
+                    }}
+                    disabled={activePreviewIndex === 0}
+                  >
+                    左移
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      reorderImages(activePreviewIndex, activePreviewIndex + 1);
+                      setActivePreviewIndex((current) => Math.min(current + 1, imagePreviews.length - 1));
+                    }}
+                    disabled={activePreviewIndex === imagePreviews.length - 1}
+                  >
+                    右移
+                  </button>
+                  <button type="button" className="text-button danger" onClick={() => removeImage(activePreviewIndex)}>
+                    刪除
+                  </button>
+                </div>
+              </div>
+            )}
           </label>
 
           <label className="profile-field">
@@ -172,7 +347,7 @@ function CreateCampaignModal({
           </label>
 
           <label className="profile-field">
-            <span>{labels.totalQuantityLabel ?? '總數量'}</span>
+            <span>{labels.totalQuantityLabel ?? '商品總數量'}</span>
             <input
               type="number"
               min="1"

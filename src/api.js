@@ -248,6 +248,24 @@ export function fetchCampaignChatMessages(campaignId, token) {
   });
 }
 
+export function checkReviewStatus(campaignId, revieweeId, token) {
+  return request('/api/v1/reviews/check', {
+    token,
+    query: {
+      campaignId,
+      revieweeId,
+    },
+  });
+}
+
+export function createReview(payload, token) {
+  return request('/api/v1/reviews', {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
 // 把 LINE callback code 送到後端，交換 JWT 與使用者資料。
 export function lineLogin(payload) {
   return request('/api/v1/auth/line', {
