@@ -14,6 +14,7 @@ function DealCard({
   onOpenParticipation,
   onOpenUserProfile,
   showJoinAction = true,
+  isHighlighted = false,
 }) {
   const isChatEnabled = typeof onOpenChat === 'function';
   const canManageParticipation = typeof onOpenParticipation === 'function';
@@ -30,7 +31,13 @@ function DealCard({
 
   return (
     <article
-      className={isChatEnabled ? 'deal-card deal-card-clickable' : 'deal-card'}
+      id={`deal-card-${deal.id}`}
+      className={[
+        isChatEnabled ? 'deal-card deal-card-clickable' : 'deal-card',
+        isHighlighted ? 'deal-card-highlighted' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onClick={isChatEnabled ? () => onOpenChat(deal) : undefined}
     >
       <div className="deal-upper">

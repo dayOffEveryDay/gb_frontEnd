@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import './App.css';
-import { AvatarIcon, BulbIcon, MoreIcon } from './Icons';
+import { AvatarIcon, BulbIcon, ExpandIcon, MoreIcon, OpenCardIcon } from './Icons';
 import {
   blockUser,
   clearStoredAuth,
   fetchMyBlockedUsers,
+  fetchMyCreditScoreLogs,
   fetchMyFollowingUsers,
+  fetchMyReceivedReviews,
   fetchUserProfile,
   followHost,
   getStoredToken,
@@ -74,12 +76,57 @@ function normalizeFollowingUser(user) {
   };
 }
 
+function normalizeCreditScoreLog(log) {
+  return {
+    id: log?.id ?? `${log?.campaignId ?? 'credit'}-${log?.createdAt ?? log?.reason ?? 'log'}`,
+    scoreChange: log?.scoreChange ?? log?.score_change ?? null,
+    reason: log?.reason ?? '--',
+    campaignId: log?.campaignId ?? log?.campaign_id ?? null,
+    createdAt: log?.createdAt ?? log?.created_at ?? '',
+  };
+}
+
+function normalizeReceivedReview(review) {
+  return {
+    id: review?.id ?? `${review?.campaignId ?? 'review'}-${review?.createdAt ?? review?.reviewerId ?? 'item'}`,
+    campaignId: review?.campaignId ?? review?.campaign_id ?? null,
+    campaignName: review?.campaignName ?? review?.campaign_name ?? '--',
+    reviewerId: review?.reviewerId ?? review?.reviewer_id ?? null,
+    reviewerName: review?.reviewerName ?? review?.reviewer_name ?? '--',
+    rating: Number(review?.rating ?? 0),
+    comment: review?.comment ?? '',
+    isScoreCounted: Boolean(review?.isScoreCounted ?? review?.is_score_counted),
+    createdAt: review?.createdAt ?? review?.created_at ?? '',
+  };
+}
+
+function formatScoreChange(value) {
+  const numericValue = Number(value);
+  if (!Number.isNaN(numericValue)) {
+    return numericValue > 0 ? `+${numericValue}` : String(numericValue);
+  }
+
+  return value ?? '--';
+}
+
+function formatCreditScoreLogDate(value) {
+  const date = parseLocalDateTime(value);
+  if (!date) {
+    return '--';
+  }
+
+  return new Intl.DateTimeFormat('zh-TW', {
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 function UserProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
-  const token = getStoredToken();
-  const currentUser = getStoredUser();
+  const [token] = useState(() => getStoredToken());
+  const [currentUser, setCurrentUser] = useState(() => getStoredUser());
   const routeUser = location.state?.user ?? null;
 
   const fallbackUser = useMemo(
@@ -98,14 +145,21 @@ function UserProfilePage() {
   const [profile, setProfile] = useState(() => normalizeProfileResponse(null, fallbackUser));
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [followingUsers, setFollowingUsers] = useState([]);
+  const [creditScoreLogs, setCreditScoreLogs] = useState([]);
+  const [receivedReviews, setReceivedReviews] = useState([]);
   const [isBlocked, setIsBlocked] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isLoadingRelations, setIsLoadingRelations] = useState(false);
+  const [isLoadingCreditScoreLogs, setIsLoadingCreditScoreLogs] = useState(false);
+  const [isLoadingReceivedReviews, setIsLoadingReceivedReviews] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUpdatingRelation, setIsUpdatingRelation] = useState(false);
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [isCreditScoreExpanded, setIsCreditScoreExpanded] = useState(false);
+  const [isReceivedReviewsExpanded, setIsReceivedReviewsExpanded] = useState(false);
+  const [expandedReceivedReviewIds, setExpandedReceivedReviewIds] = useState({});
   const [profileDraft, setProfileDraft] = useState({
     displayName: fallbackUser.displayName ?? '',
     hasCostcoMembership: Boolean(currentUser?.hasCostcoMembership ?? currentUser?.has_costco_membership),
@@ -218,6 +272,68 @@ function UserProfilePage() {
     };
   }, [token, viewedUserId]);
 
+  useEffect(() => {
+    if (!isSelf || !token) {
+      setCreditScoreLogs([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setIsLoadingCreditScoreLogs(true);
+
+    fetchMyCreditScoreLogs({ page: 0, size: 20 }, token)
+      .then((data) => {
+        if (!cancelled) {
+          setCreditScoreLogs(normalizePagedItems(data).map(normalizeCreditScoreLog));
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setError((current) => current || (nextError instanceof Error ? nextError.message : '載入信用分紀錄失敗'));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingCreditScoreLogs(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelf, token]);
+
+  useEffect(() => {
+    if (!isSelf || !token) {
+      setReceivedReviews([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setIsLoadingReceivedReviews(true);
+
+    fetchMyReceivedReviews({ page: 0, size: 10 }, token)
+      .then((data) => {
+        if (!cancelled) {
+          setReceivedReviews(normalizePagedItems(data).map(normalizeReceivedReview));
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setError((current) => current || (nextError instanceof Error ? nextError.message : '載入收到的評價失敗'));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingReceivedReviews(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelf, token]);
+
   const handleBack = () => {
     if (window.history.length > 1) {
       navigate(-1);
@@ -225,6 +341,26 @@ function UserProfilePage() {
     }
 
     navigate('/');
+  };
+
+  const handleOpenCreditScoreCampaign = (campaignId) => {
+    if (campaignId == null) {
+      return;
+    }
+
+    navigate('/', {
+      state: {
+        focusCampaignId: String(campaignId),
+        source: 'credit-score-log',
+      },
+    });
+  };
+
+  const toggleReceivedReview = (reviewId) => {
+    setExpandedReceivedReviewIds((current) => ({
+      ...current,
+      [reviewId]: !current[reviewId],
+    }));
   };
 
   const handleSaveProfile = async () => {
@@ -252,6 +388,7 @@ function UserProfilePage() {
         hasCostcoMembership: profileDraft.hasCostcoMembership,
       };
 
+      setCurrentUser(nextStoredUser);
       setStoredAuth({ token, user: nextStoredUser });
       setProfile((current) => ({
         ...current,
@@ -399,6 +536,90 @@ function UserProfilePage() {
     }
   };
 
+  const renderCreditScoreTimeline = (logs, variant = 'compact') => (
+    <div className={`credit-score-timeline ${variant}`}>
+      {logs.map((log, index) => {
+        const scoreValue = Number(log.scoreChange);
+        const scoreClass =
+          !Number.isNaN(scoreValue) && scoreValue > 0
+            ? 'positive'
+            : !Number.isNaN(scoreValue) && scoreValue < 0
+              ? 'negative'
+              : '';
+
+        return (
+          <article key={`${log.id}-${index}`} className="credit-score-timeline-item">
+            <span className="credit-score-timeline-dot" aria-hidden="true" />
+            <time>{formatCreditScoreLogDate(log.createdAt)}</time>
+            <strong>{log.reason}</strong>
+            <span className={`credit-score-timeline-delta ${scoreClass}`.trim()}>
+              {formatScoreChange(log.scoreChange)}
+            </span>
+            {log.campaignId != null && (
+              <button
+                type="button"
+                className="credit-score-campaign-button"
+                onClick={() => handleOpenCreditScoreCampaign(log.campaignId)}
+                aria-label={`前往團購單 ${log.campaignId}`}
+                title="前往團購單"
+              >
+                <OpenCardIcon />
+              </button>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+
+  const renderReceivedReviews = (reviews, variant = 'compact') => (
+    <div className={`received-review-list ${variant}`}>
+      {reviews.map((review, index) => {
+        const reviewKey = `${review.id}-${index}`;
+        const isExpanded = Boolean(expandedReceivedReviewIds[reviewKey]);
+
+        return (
+          <article key={reviewKey} className="received-review-card">
+            <header className="received-review-header">
+              <strong>{review.reviewerName}</strong>
+              <span className="received-review-stars" aria-label={`${review.rating} 星評價`}>
+                {'★'.repeat(Math.max(0, Math.min(5, review.rating)))}
+                {'☆'.repeat(Math.max(0, 5 - Math.min(5, review.rating)))}
+              </span>
+              <span className={review.isScoreCounted ? 'score-counted-badge' : 'score-counted-badge muted'}>
+                {review.isScoreCounted ? '已納入信用分' : '未納入信用分'}
+              </span>
+              <button type="button" className="received-review-toggle" onClick={() => toggleReceivedReview(reviewKey)}>
+                {isExpanded ? '收合' : '展開'}
+              </button>
+            </header>
+
+            {isExpanded && (
+              <div className="received-review-detail">
+                {review.comment && <p>評價內容：{review.comment}</p>}
+                <div className="received-review-meta-row">
+                  <span>合購：{review.campaignName}</span>
+                  <time>{formatDateTime(review.createdAt)}</time>
+                  {review.campaignId != null && (
+                    <button
+                      type="button"
+                      className="credit-score-campaign-button"
+                      onClick={() => handleOpenCreditScoreCampaign(review.campaignId)}
+                      aria-label={`前往團購單 ${review.campaignId}`}
+                      title="前往團購單"
+                    >
+                      <OpenCardIcon />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="app-shell user-profile-page-shell">
       <section className="user-profile-page">
@@ -514,6 +735,72 @@ function UserProfilePage() {
             <button type="button" className="secondary-button" onClick={handleLogout}>
               登出
             </button>
+          </section>
+        )}
+
+        {isSelf && (
+          <section className="user-profile-section">
+            <div className="user-profile-section-heading">
+              <h2>我的信用分紀錄</h2>
+              <div className="credit-score-heading-actions">
+                <span>{creditScoreLogs.length} 筆</span>
+                {creditScoreLogs.length > 0 && (
+                  <button
+                    type="button"
+                    className="credit-score-expand-button"
+                    onClick={() => setIsCreditScoreExpanded((current) => !current)}
+                    aria-label={isCreditScoreExpanded ? '收合信用分紀錄' : '展開信用分紀錄'}
+                    title={isCreditScoreExpanded ? '收合' : '展開'}
+                  >
+                    <ExpandIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isLoadingCreditScoreLogs && <p className="state-message">載入信用分紀錄中...</p>}
+            {!isLoadingCreditScoreLogs && creditScoreLogs.length === 0 && (
+              <p className="panel-note">目前沒有信用分異動紀錄。</p>
+            )}
+
+            {creditScoreLogs.length > 0 &&
+              renderCreditScoreTimeline(
+                isCreditScoreExpanded ? creditScoreLogs.slice(0, 10) : creditScoreLogs,
+                isCreditScoreExpanded ? 'expanded' : 'compact'
+              )}
+          </section>
+        )}
+
+        {isSelf && (
+          <section className="user-profile-section">
+            <div className="user-profile-section-heading">
+              <h2>我收到的評價分</h2>
+              <div className="credit-score-heading-actions">
+                <span>{receivedReviews.length} 筆</span>
+                {receivedReviews.length > 0 && (
+                  <button
+                    type="button"
+                    className="credit-score-expand-button"
+                    onClick={() => setIsReceivedReviewsExpanded((current) => !current)}
+                    aria-label={isReceivedReviewsExpanded ? '收合收到的評價' : '展開收到的評價'}
+                    title={isReceivedReviewsExpanded ? '收合' : '展開'}
+                  >
+                    <ExpandIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isLoadingReceivedReviews && <p className="state-message">載入收到的評價中...</p>}
+            {!isLoadingReceivedReviews && receivedReviews.length === 0 && (
+              <p className="panel-note">目前沒有收到的評價。</p>
+            )}
+
+            {receivedReviews.length > 0 &&
+              renderReceivedReviews(
+                isReceivedReviewsExpanded ? receivedReviews.slice(0, 10) : receivedReviews,
+                isReceivedReviewsExpanded ? 'expanded' : 'compact'
+              )}
           </section>
         )}
 

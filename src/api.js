@@ -235,6 +235,13 @@ export function fetchUnreadNotifications(token) {
   });
 }
 
+export function fetchReadNotifications(params, token) {
+  return request('/api/v1/notifications/read', {
+    query: params,
+    token,
+  });
+}
+
 export function markNotificationRead(notificationId, token) {
   return request(`/api/v1/notifications/${notificationId}/read`, {
     method: 'PUT',
@@ -244,6 +251,20 @@ export function markNotificationRead(notificationId, token) {
 
 export function fetchCampaignChatMessages(campaignId, token) {
   return request(`/api/v1/campaigns/${campaignId}/chat-messages`, {
+    token,
+  });
+}
+
+export function fetchMyCreditScoreLogs(params, token) {
+  return request('/api/v1/credit-scores/me/logs', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchMyReceivedReviews(params, token) {
+  return request('/api/v1/reviews/me/received', {
+    query: params,
     token,
   });
 }
@@ -271,6 +292,14 @@ export function lineLogin(payload) {
   return request('/api/v1/auth/line', {
     method: 'POST',
     body: payload,
+  });
+}
+
+export function devLogin(userId) {
+  return request('/api/v1/auth/dev-login', {
+    query: {
+      userId,
+    },
   });
 }
 

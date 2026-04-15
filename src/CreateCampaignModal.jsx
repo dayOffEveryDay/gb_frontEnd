@@ -149,10 +149,16 @@ function CreateCampaignModal({
   };
 
   const handlePreviewTouchStart = (event) => {
+    event.stopPropagation();
     previewTouchStartXRef.current = event.touches?.[0]?.clientX ?? null;
   };
 
+  const handlePreviewTouchMove = (event) => {
+    event.stopPropagation();
+  };
+
   const handlePreviewTouchEnd = (event) => {
+    event.stopPropagation();
     const startX = previewTouchStartXRef.current;
     const endX = event.changedTouches?.[0]?.clientX ?? null;
     previewTouchStartXRef.current = null;
@@ -272,6 +278,7 @@ function CreateCampaignModal({
                 <div
                   className="image-preview-frame"
                   onTouchStart={handlePreviewTouchStart}
+                  onTouchMove={handlePreviewTouchMove}
                   onTouchEnd={handlePreviewTouchEnd}
                 >
                   <img src={activePreview.url} alt={`${activePreview.file.name} preview`} className="image-preview-thumb" />

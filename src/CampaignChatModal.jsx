@@ -4,6 +4,69 @@ import { fetchCampaignChatMessages, getBackendBaseUrl } from './api';
 import { MoreIcon } from './Icons';
 
 const UNLOCK_COMMAND = '/解鎖修改';
+const COMPLETED_CHAT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const COMPLETED_CHAT_NOTICE = '團購已完成 聊天室將在3天後終止連線';
+
+function getCampaignStatus(campaign) {
+  return (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? '').toString().toUpperCase();
+}
+
+function getCampaignCompletedAt(campaign) {
+  return campaign?.completedAt ?? campaign?.completed_at ?? campaign?.completedTime ?? campaign?.completed_time ?? '';
+}
+
+function getCampaignChatExpiresAt(campaign) {
+  return (
+    campaign?.chatExpiresAt ??
+    campaign?.chat_expires_at ??
+    campaign?.chatExpiredAt ??
+    campaign?.chat_expired_at ??
+    campaign?.chatEndAt ??
+    campaign?.chat_end_at ??
+    ''
+  );
+}
+
+function hasExplicitStoppedChat(campaign) {
+  const stopped = campaign?.chatStopped ?? campaign?.chat_stopped ?? campaign?.chatClosed ?? campaign?.chat_closed;
+  if (stopped === true) {
+    return true;
+  }
+
+  const available =
+    campaign?.chatAvailable ?? campaign?.chat_available ?? campaign?.chatEnabled ?? campaign?.chat_enabled ?? campaign?.canChat;
+  return available === false;
+}
+
+function isCompletedChatExpiredByFields(status, completedAt) {
+  if (status !== 'COMPLETED') {
+    return false;
+  }
+
+  if (!completedAt) {
+    return false;
+  }
+
+  const completedDate = new Date(completedAt);
+  if (Number.isNaN(completedDate.getTime())) {
+    return false;
+  }
+
+  return Date.now() >= completedDate.getTime() + COMPLETED_CHAT_RETENTION_MS;
+}
+
+function isPastChatExpiresAt(expiresAt) {
+  if (!expiresAt) {
+    return false;
+  }
+
+  const expiresDate = new Date(expiresAt);
+  if (Number.isNaN(expiresDate.getTime())) {
+    return false;
+  }
+
+  return Date.now() >= expiresDate.getTime();
+}
 
 function normalizeChatMessage(message) {
   return {
@@ -75,6 +138,10 @@ function CampaignChatModal({
   onConfirmReceipt,
   onRaiseDispute,
   onOpenReview,
+  onCampaignStatusChange,
+  externalStatusEvent,
+  isParticipantReviewCompleted = false,
+  isHostReviewCompleted = false,
   onClose,
 }) {
   const [messages, setMessages] = useState(null);
@@ -85,19 +152,26 @@ function CampaignChatModal({
   const [isDeliveringCampaign, setIsDeliveringCampaign] = useState(false);
   const [isConfirmingReceipt, setIsConfirmingReceipt] = useState(false);
   const [isRaisingDispute, setIsRaisingDispute] = useState(false);
+  const [isChatStopped, setIsChatStopped] = useState(false);
   const [hasConfirmedReceipt, setHasConfirmedReceipt] = useState(false);
   const [hasRaisedDispute, setHasRaisedDispute] = useState(false);
   const [isDisputeDialogOpen, setIsDisputeDialogOpen] = useState(false);
   const [disputeReasonDraft, setDisputeReasonDraft] = useState('');
   const clientRef = useRef(null);
   const bodyRef = useRef(null);
+  const lastExternalStatusEventIdRef = useRef('');
 
   const campaignId = campaign?.id;
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
   const isHost = Boolean(Number(campaign?.host?.id) === Number(currentUser?.id) || campaign?.isHost);
-  const campaignStatus = (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? '')
-    .toString()
-    .toUpperCase();
+  const campaignStatus = getCampaignStatus(campaign);
+  const campaignCompletedAt = getCampaignCompletedAt(campaign);
+  const campaignChatExpiresAt = getCampaignChatExpiresAt(campaign);
+  const shouldStopChat =
+    hasExplicitStoppedChat(campaign) ||
+    isPastChatExpiresAt(campaignChatExpiresAt) ||
+    isCompletedChatExpiredByFields(campaignStatus, campaignCompletedAt);
+  const showCompletedChatNotice = campaignStatus === 'COMPLETED' && !shouldStopChat;
   const participantStatus = (
     campaign?.myParticipantStatus ??
     campaign?.my_participant_status ??
@@ -133,7 +207,12 @@ function CampaignChatModal({
     setDraft('');
     setIsDisputeDialogOpen(false);
     setDisputeReasonDraft('');
-  }, [campaignId, isOpen]);
+    setIsChatStopped(shouldStopChat);
+  }, [campaignCompletedAt, campaignChatExpiresAt, campaignId, campaignStatus, isOpen, shouldStopChat]);
+
+  useEffect(() => {
+    setIsChatStopped(shouldStopChat);
+  }, [shouldStopChat]);
 
   useEffect(() => {
     if (!isOpen || !campaignId || !token) {
@@ -150,6 +229,12 @@ function CampaignChatModal({
       })
       .catch((nextError) => {
         if (!cancelled) {
+          if (shouldStopChat) {
+            setIsChatStopped(true);
+            setMessages([]);
+            return;
+          }
+
           setError(nextError.message);
           setMessages([]);
         }
@@ -158,10 +243,16 @@ function CampaignChatModal({
     return () => {
       cancelled = true;
     };
-  }, [campaignId, isOpen, token]);
+  }, [campaignId, isOpen, shouldStopChat, token]);
 
   useEffect(() => {
     if (!isOpen || !campaignId || !token) {
+      return undefined;
+    }
+
+    if (shouldStopChat) {
+      setIsChatStopped(true);
+      setIsConnected(false);
       return undefined;
     }
 
@@ -187,7 +278,29 @@ function CampaignChatModal({
             setIsConnected(true);
             client.subscribe(`/topic/campaigns/${campaignId}`, (frame) => {
               try {
-                const nextMessage = normalizeChatMessage(JSON.parse(frame.body));
+                const payload = JSON.parse(frame.body);
+                if (payload?.type === 'CAMPAIGN_STATUS_CHANGED') {
+                  setMessages((current) => [
+                    ...(current ?? []),
+                    {
+                      type: 'SYSTEM',
+                      senderId: null,
+                      senderName: '系統通知',
+                      avatarUrl: '',
+                      content: payload.message || '團購狀態已更新',
+                      timestamp: new Date().toISOString(),
+                    },
+                  ]);
+                  onCampaignStatusChange?.({
+                    campaignId: payload.campaignId ?? campaignId,
+                    status: payload.status,
+                    message: payload.message,
+                    source: 'topic',
+                  });
+                  return;
+                }
+
+                const nextMessage = normalizeChatMessage(payload);
                 setMessages((current) => [...(current ?? []), nextMessage]);
               } catch {
                 setError('聊天室訊息格式錯誤');
@@ -195,6 +308,12 @@ function CampaignChatModal({
             });
           },
           onStompError: (frame) => {
+            if (campaignStatus === 'COMPLETED') {
+              setIsChatStopped(true);
+              setIsConnected(false);
+              return;
+            }
+
             setError(frame.headers.message || '聊天室連線發生錯誤');
           },
           onWebSocketClose: () => {
@@ -217,13 +336,37 @@ function CampaignChatModal({
       clientRef.current?.deactivate();
       clientRef.current = null;
     };
-  }, [campaignId, isOpen, token, wsUrl]);
+  }, [campaignId, campaignStatus, isOpen, onCampaignStatusChange, shouldStopChat, token, wsUrl]);
 
   useEffect(() => {
     if (bodyRef.current) {
       bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (
+      !isOpen ||
+      !externalStatusEvent?.id ||
+      Number(externalStatusEvent.campaignId) !== Number(campaignId) ||
+      lastExternalStatusEventIdRef.current === externalStatusEvent.id
+    ) {
+      return;
+    }
+
+    lastExternalStatusEventIdRef.current = externalStatusEvent.id;
+    setMessages((current) => [
+      ...(current ?? []),
+      {
+        type: 'SYSTEM',
+        senderId: null,
+        senderName: '系統通知',
+        avatarUrl: '',
+        content: externalStatusEvent.message || '團購狀態已更新',
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, [campaignId, externalStatusEvent, isOpen]);
 
   if (!isOpen || !campaign) {
     return null;
@@ -306,6 +449,10 @@ function CampaignChatModal({
   };
 
   const handleSend = async () => {
+    if (isChatStopped) {
+      return;
+    }
+
     const content = draft.trim();
     if (!content) {
       return;
@@ -370,93 +517,111 @@ function CampaignChatModal({
         <div className="chat-status-row">
           <span>{isConnected ? '已連線' : '連線中'}</span>
 
-          {canDeliverCampaign ? (
-            <button
-              type="button"
-              className="chat-status-action"
-              onClick={handleDeliver}
-              disabled={isDeliveringCampaign}
-            >
-              {isDeliveringCampaign ? '送出中..' : '發起面交'}
-            </button>
-          ) : showDeliveredBadge ? (
-            <span className="chat-status-pill">已提出面交</span>
-          ) : canRaiseDispute ? (
-            <button
-              type="button"
-              className="chat-status-action danger"
-              onClick={() => {
-                setError('');
-                setStatusMessage('');
-                setIsDisputeDialogOpen(true);
-              }}
-              disabled={isRaisingDispute}
-            >
-              提出仲裁
-            </button>
-          ) : showDisputedBadge ? (
-            <span className="chat-status-pill danger">已提出仲裁</span>
-          ) : canConfirmReceipt ? (
-            <button
-              type="button"
-              className="chat-status-action"
-              onClick={handleConfirmReceipt}
-              disabled={isConfirmingReceipt}
-            >
-              {isConfirmingReceipt ? '送出中..' : '確認收到'}
-            </button>
-          ) : showConfirmedBadge ? (
-            <span className="chat-status-pill">已確認收到</span>
-          ) : (
-            <span>{campaign.meetupLocation || '討論'}</span>
-          )}
+          <div className="chat-status-actions">
+            {canDeliverCampaign ? (
+              <button
+                type="button"
+                className="chat-status-action"
+                onClick={handleDeliver}
+                disabled={isDeliveringCampaign}
+              >
+                {isDeliveringCampaign ? '送出中..' : '發起面交'}
+              </button>
+            ) : showDeliveredBadge ? (
+              <span className="chat-status-pill">已提出面交</span>
+            ) : canRaiseDispute ? (
+              <button
+                type="button"
+                className="chat-status-action danger"
+                onClick={() => {
+                  setError('');
+                  setStatusMessage('');
+                  setIsDisputeDialogOpen(true);
+                }}
+                disabled={isRaisingDispute}
+              >
+                提出仲裁
+              </button>
+            ) : showDisputedBadge ? (
+              <span className="chat-status-pill danger">已提出仲裁</span>
+            ) : canConfirmReceipt ? (
+              <button
+                type="button"
+                className="chat-status-action"
+                onClick={handleConfirmReceipt}
+                disabled={isConfirmingReceipt}
+              >
+                {isConfirmingReceipt ? '送出中..' : '確認收到'}
+              </button>
+            ) : showConfirmedBadge ? (
+              <span className="chat-status-pill">已確認收到</span>
+            ) : null}
+
+            <span className="chat-status-pill">{`面交地點：${campaign.meetupLocation || '討論'}`}</span>
+
+            {canReviewAsParticipant && campaign?.host?.id != null && (
+              <button
+                type="button"
+                className="chat-status-action review-status-action"
+                disabled={isParticipantReviewCompleted}
+                data-label={isParticipantReviewCompleted ? '已完成評價' : '評價主揪'}
+                onClick={() =>
+                  onOpenReview?.({
+                    campaignId,
+                    revieweeId: campaign.host.id,
+                    revieweeName: campaign.host.displayName,
+                    source: 'participant',
+                  })
+                }
+              >
+                評價主揪
+              </button>
+            )}
+
+            {canReviewAsHost && (
+              <button
+                type="button"
+                className="chat-status-action review-status-action"
+                disabled={isHostReviewCompleted}
+                data-label={isHostReviewCompleted ? '評價已完成' : '評價團員'}
+                onClick={() => onOpenParticipation?.({ ...campaign, initialHostView: 'participants' })}
+              >
+                評價團員
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="chat-meta-row">
-          <span className="chat-status-pill">{`面交地點：${campaign.meetupLocation || '討論'}`}</span>
-
-          {canReviewAsParticipant && campaign?.host?.id != null && (
-            <button
-              type="button"
-              className="chat-status-action"
-              onClick={() =>
-                onOpenReview?.({
-                  campaignId,
-                  revieweeId: campaign.host.id,
-                  revieweeName: campaign.host.displayName,
-                  source: 'participant',
-                })
-              }
-            >
-              評價主揪
-            </button>
-          )}
-
-          {canReviewAsHost && (
-            <button
-              type="button"
-              className="chat-status-action"
-              onClick={() => onOpenParticipation?.({ ...campaign, initialHostView: 'participants' })}
-            >
-              評價團員
-            </button>
-          )}
-        </div>
-
-        {isHost && (
+        {isHost && campaignStatus === 'FULL' && (
           <p className="panel-note">
             主揪可在此輸入 <code>{UNLOCK_COMMAND}</code> 開啟滿單後修改。
           </p>
         )}
 
         <div className="chat-message-list" ref={bodyRef}>
+          {showCompletedChatNotice && !isChatStopped && (
+            <div className="chat-pinned-notice" role="status">
+              {COMPLETED_CHAT_NOTICE}
+            </div>
+          )}
+
           {messages == null && <p className="muted-copy">聊天室訊息載入中..</p>}
           {messages != null && messages.length === 0 && <p className="muted-copy">目前沒有訊息</p>}
 
           {(messages ?? []).map((message, index) => {
+            const isSystemMessage = message.type === 'SYSTEM';
             const isMine = message.senderId != null && Number(message.senderId) === Number(currentUser?.id);
             const avatarUrl = resolveMessageAvatar(message, campaign, currentUser, isMine);
             const avatarLabel = getChatAvatarLabel(message.senderName, isMine);
+
+            if (isSystemMessage) {
+              return (
+                <article key={`${message.timestamp}-${index}`} className="chat-system-announcement">
+                  <span>{message.content}</span>
+                  <time>{formatMessageTime(message.timestamp)}</time>
+                </article>
+              );
+            }
 
             return (
               <article
@@ -503,7 +668,8 @@ function CampaignChatModal({
           <input
             type="text"
             value={draft}
-            placeholder="輸入訊息"
+            placeholder={isChatStopped ? '聊天室已停止連線' : '輸入訊息'}
+            disabled={isChatStopped}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -512,7 +678,7 @@ function CampaignChatModal({
               }
             }}
           />
-          <button type="button" className="text-button" onClick={handleSend}>
+          <button type="button" className="text-button" onClick={handleSend} disabled={isChatStopped}>
             送出
           </button>
         </div>

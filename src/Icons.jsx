@@ -14,6 +14,14 @@ export function BellIcon() {
   );
 }
 
+export function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M10.8 4a6.8 6.8 0 1 0 4.25 12.1l3.42 3.43 1.42-1.42-3.43-3.42A6.8 6.8 0 0 0 10.8 4Zm0 2a4.8 4.8 0 1 1 0 9.6 4.8 4.8 0 0 1 0-9.6Z" />
+    </svg>
+  );
+}
+
 export function BulbIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -42,6 +50,22 @@ export function MoreIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5.5a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5Zm0 8.25a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5Zm0 8.25a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5Z" />
+    </svg>
+  );
+}
+
+export function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 5h6v2H8.41l3.3 3.29-1.42 1.42L7 8.41V11H5V5Zm8 0h6v6h-2V8.41l-3.29 3.3-1.42-1.42L15.59 7H13V5ZM5 13h2v2.59l3.29-3.3 1.42 1.42L8.41 17H11v2H5v-6Zm12 0h2v6h-6v-2h2.59l-3.3-3.29 1.42-1.42 3.29 3.3V13Z" />
+    </svg>
+  );
+}
+
+export function OpenCardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 4h9v2H7v11h11v-7h2v9H5V4Zm11 0h5v5h-2V7.41l-6.29 6.3-1.42-1.42L17.59 6H16V4Z" />
     </svg>
   );
 }

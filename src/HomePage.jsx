@@ -1,21 +1,24 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
 import {
   cancelCampaign,
+  checkReviewStatus,
   confirmCampaignReceipt,
   clearStoredAuth,
   createCampaign,
   deliverCampaign,
+  devLogin,
   fetchCampaigns,
-  fetchUnreadNotifications,
   fetchCategories,
   fetchHostDashboard,
   fetchMyHostedCampaigns,
   fetchMyJoinedCampaigns,
   fetchMyParticipation,
+  fetchReadNotifications,
   fetchStores,
+  fetchUnreadNotifications,
   getFrontendBaseUrl,
   getBackendBaseUrl,
   getStoredToken,
@@ -62,6 +65,7 @@ import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
+import { SearchIcon } from './Icons';
 
 function getCampaignLifecycle(rawCampaign) {
   const statusSource = [
@@ -231,6 +235,25 @@ function normalizeHostDashboard(dashboard) {
   };
 }
 
+function normalizeNotificationList(data) {
+  const items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
+  return items.map(normalizeNotification);
+}
+
+function getReviewKey(campaignId, revieweeId) {
+  return `${Number(campaignId)}:${Number(revieweeId)}`;
+}
+
+function isReviewAlreadyCompleted(data) {
+  return Boolean(
+    data?.reviewed ??
+      data?.isReviewed ??
+      data?.alreadyReviewed ??
+      data?.exists ??
+      data?.checked
+  );
+}
+
 function getCampaignListSignature(items) {
   return JSON.stringify(Array.isArray(items) ? items : []);
 }
@@ -308,6 +331,14 @@ function canOpenCampaignChat(campaign) {
   return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
 }
 
+function isSameUserId(firstUserId, secondUserId) {
+  if (firstUserId == null || secondUserId == null) {
+    return false;
+  }
+
+  return Number(firstUserId) === Number(secondUserId);
+}
+
 function isFullCampaignNotification(notification) {
   return notification?.type === 'CAMPAIGN_FULL' && notification?.referenceId != null;
 }
@@ -317,10 +348,12 @@ function isReviewCampaignNotification(notification) {
 }
 
 const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
+const SWIPE_HINT_SEEN_KEY = 'home_swipe_hint_seen';
 
 function HomePage() {
   const navigate = useNavigate();
-  const swipeTabs = ['MINE', ...TYPE_OPTIONS.map((option) => option.value)];
+  const location = useLocation();
+  const swipeTabs = ['MINE', ...TYPE_OPTIONS.map((option) => option.value), 'REQUEST'];
   const localizedMyCampaignScopes = [
     { value: 'ALL', label: '全部' },
     { value: 'HOSTED', label: '我的團購' },
@@ -385,8 +418,11 @@ function HomePage() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [readNotifications, setReadNotifications] = useState([]);
   const [notificationsError, setNotificationsError] = useState('');
+  const [readNotificationsError, setReadNotificationsError] = useState('');
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+  const [isReadNotificationsLoading, setIsReadNotificationsLoading] = useState(false);
   const [liveNotification, setLiveNotification] = useState(null);
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -412,7 +448,13 @@ function HomePage() {
   const [participationError, setParticipationError] = useState('');
   const [isSubmittingParticipation, setIsSubmittingParticipation] = useState(false);
   const [reviewTarget, setReviewTarget] = useState(null);
+  const [reviewedReviewKeys, setReviewedReviewKeys] = useState({});
+  const [chatReviewState, setChatReviewState] = useState({
+    isParticipantReviewed: false,
+    isHostAllReviewed: false,
+  });
   const [chatCampaign, setChatCampaign] = useState(null);
+  const [chatStatusEvent, setChatStatusEvent] = useState(null);
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
     title: '',
@@ -421,6 +463,10 @@ function HomePage() {
   });
   const [referenceRefreshKey, setReferenceRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [focusedCampaignId, setFocusedCampaignId] = useState('');
+  const [pageTransitionDirection, setPageTransitionDirection] = useState('forward');
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -439,8 +485,10 @@ function HomePage() {
   const swipeStartXRef = useRef(null);
   const canPullRef = useRef(false);
   const gestureLockRef = useRef('');
+  const searchInputRef = useRef(null);
   const notificationClientRef = useRef(null);
   const liveNotificationTimerRef = useRef(null);
+  const lastHandledChatNotificationRef = useRef('');
   const pendingProfileReturnRef = useRef(null);
   const profileRestoreAppliedRef = useRef(false);
   const campaignsSignatureRef = useRef('[]');
@@ -530,6 +578,43 @@ function HomePage() {
   }, [campaigns, chatCampaign, isInitialLoading]);
 
   useEffect(() => {
+    const targetCampaignId = location.state?.focusCampaignId;
+    if (!targetCampaignId) {
+      return;
+    }
+
+    setFocusedCampaignId(String(targetCampaignId));
+    switchActiveType('MINE');
+    setActiveMyCampaignScope('ALL');
+    setActiveMyCampaignFilter('ALL');
+    window.history.replaceState({}, document.title);
+  }, [location.state]);
+
+  useEffect(() => {
+    if (!focusedCampaignId || isInitialLoading) {
+      return;
+    }
+
+    const node = document.getElementById(`deal-card-${focusedCampaignId}`);
+    if (!node) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+
+    const clearTimerId = window.setTimeout(() => {
+      setFocusedCampaignId('');
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(timerId);
+      window.clearTimeout(clearTimerId);
+    };
+  }, [campaigns, focusedCampaignId, isInitialLoading]);
+
+  useEffect(() => {
     const timerId = window.setInterval(() => {
       setCountdownNow(Date.now());
     }, 1000);
@@ -601,20 +686,25 @@ function HomePage() {
   useEffect(() => {
     if (!token) {
       setNotifications([]);
+      setReadNotifications([]);
       setNotificationsError('');
+      setReadNotificationsError('');
       setIsNotificationsLoading(false);
+      setIsReadNotificationsLoading(false);
       return undefined;
     }
 
     let cancelled = false;
 
     setIsNotificationsLoading(true);
+    setIsReadNotificationsLoading(true);
     setNotificationsError('');
+    setReadNotificationsError('');
 
     fetchUnreadNotifications(token)
       .then((data) => {
         if (!cancelled) {
-          setNotifications(Array.isArray(data) ? data.map(normalizeNotification) : []);
+          setNotifications(normalizeNotificationList(data));
         }
       })
       .catch((error) => {
@@ -626,6 +716,24 @@ function HomePage() {
       .finally(() => {
         if (!cancelled) {
           setIsNotificationsLoading(false);
+        }
+      });
+
+    fetchReadNotifications({ page: 0, size: 20 }, token)
+      .then((data) => {
+        if (!cancelled) {
+          setReadNotifications(normalizeNotificationList(data));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setReadNotificationsError(error.message);
+          setReadNotifications([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsReadNotificationsLoading(false);
         }
       });
 
@@ -678,7 +786,7 @@ function HomePage() {
                 fetchUnreadNotifications(token)
                   .then((data) => {
                     if (!disposed) {
-                      setNotifications(Array.isArray(data) ? data.map(normalizeNotification) : []);
+                      setNotifications(normalizeNotificationList(data));
                       setNotificationsError('');
                     }
                   })
@@ -755,6 +863,13 @@ function HomePage() {
       setCampaignError('');
 
       try {
+        if (activeType === 'REQUEST') {
+          setCampaigns([]);
+          setPage(0);
+          setHasMore(false);
+          return;
+        }
+
         if (activeType === 'MINE') {
           const mineQuery = {
             page: 0,
@@ -868,7 +983,7 @@ function HomePage() {
 
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || activeType === 'MINE' || !hasMore || isInitialLoading || isLoadingMore) {
+    if (!node || activeType === 'MINE' || activeType === 'REQUEST' || !hasMore || isInitialLoading || isLoadingMore) {
       return undefined;
     }
 
@@ -943,6 +1058,38 @@ function HomePage() {
     }
   };
 
+  const handleDevLogin = async (userId) => {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) {
+      setAuthError('請輸入開發者登入 userId');
+      return;
+    }
+
+    setAuthError('');
+    setAuthLoading(true);
+
+    try {
+      const data = await devLogin(normalizedUserId);
+      const nextUser = normalizeUser({
+        id: data.userId ?? normalizedUserId,
+        displayName: `開發者 ${data.userId ?? normalizedUserId}`,
+      });
+
+      setStoredAuth({ token: data.token, user: nextUser });
+      setToken(data.token);
+      setUser(nextUser);
+      setProfileDraft(nextUser ?? { displayName: '', hasCostcoMembership: false });
+      setIsLoginModalOpen(false);
+      setIsProfileOpen(false);
+      setIsNotificationsOpen(false);
+      setIsCreateCampaignOpen(false);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : '開發者登入失敗');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     clearStoredAuth();
     setToken('');
@@ -953,7 +1100,7 @@ function HomePage() {
     setIsCreateCampaignOpen(false);
   };
 
-  const markNotificationAsRead = async (notificationId) => {
+  const markNotificationAsRead = async (notificationId, sourceNotification = null) => {
     if (!token) {
       return;
     }
@@ -965,7 +1112,18 @@ function HomePage() {
 
     try {
       await markNotificationRead(notificationId, token);
+      const notificationToMove =
+        sourceNotification ?? notifications.find((notification) => notification.id === notificationId) ?? null;
       setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+      if (notificationToMove) {
+        setReadNotifications((current) => {
+          if (current.some((notification) => notification.id === notificationToMove.id)) {
+            return current;
+          }
+
+          return [notificationToMove, ...current].slice(0, 20);
+        });
+      }
     } catch (error) {
       setNotificationsError(error.message);
     }
@@ -984,11 +1142,11 @@ function HomePage() {
     await Promise.all(matchedNotifications.map((notification) => markNotificationAsRead(notification.id)));
   };
 
-  const findCampaignForNotification = async (campaignId) => {
+  const findCampaignForNotification = async (campaignId, { forceRemote = false } = {}) => {
     const normalizedCampaignId = Number(campaignId);
     const currentCampaign = campaigns.find((campaign) => Number(campaign.id) === normalizedCampaignId);
 
-    if (currentCampaign) {
+    if (currentCampaign && !forceRemote) {
       return currentCampaign;
     }
 
@@ -1026,9 +1184,11 @@ function HomePage() {
     const isReviewNotification = isReviewCampaignNotification(notification);
 
     if (!isChatNotification && !isReviewNotification) {
-      await markNotificationAsRead(notification.id);
+      await markNotificationAsRead(notification.id, notification);
       return;
     }
+
+    await markNotificationAsRead(notification.id, notification);
 
     try {
       const targetCampaign = await findCampaignForNotification(notification.referenceId);
@@ -1039,7 +1199,6 @@ function HomePage() {
       }
 
       if (isReviewNotification) {
-        await markNotificationAsRead(notification.id);
         setIsNotificationsOpen(false);
 
         if ((targetCampaign.mineSource ?? '').toString().toUpperCase() === 'HOSTED') {
@@ -1112,7 +1271,7 @@ function HomePage() {
     }
   };
 
-  const handleOpenCreateCampaign = () => {
+  const handleOpenCreateCampaign = (scenarioType = 'SCHEDULED') => {
     if (!token) {
       setIsLoginModalOpen(true);
       setCreateCampaignError('');
@@ -1124,7 +1283,8 @@ function HomePage() {
       ...getInitialCampaignForm(),
       storeId: current.storeId || stores[0]?.id?.toString() || '',
       categoryId: current.categoryId || categories[0]?.id?.toString() || '',
-      scenarioType: current.scenarioType || 'SCHEDULED',
+      scenarioType,
+      expirePreset: scenarioType === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m',
     }));
     setIsCreateCampaignOpen(true);
   };
@@ -1139,12 +1299,89 @@ function HomePage() {
     setRefreshKey((current) => current + 1);
   }, [isRefreshing]);
 
+  const renderPageDots = () => (
+    showSwipeHint ? (
+      <div className="swipe-cue" aria-label="可左右滑動切換頁面">
+        <span className="swipe-cue-arrow left" aria-hidden="true">&lt;</span>
+        <span className="swipe-cue-arrow right" aria-hidden="true">&gt;</span>
+      </div>
+    ) : (
+      null
+    )
+  );
+
+  const switchActiveType = (nextType) => {
+    setActiveType((current) => {
+      const resolvedType = typeof nextType === 'function' ? nextType(current) : nextType;
+      if (!resolvedType || resolvedType === current) {
+        return current;
+      }
+
+      const currentIndex = swipeTabs.findIndex((value) => value === current);
+      const nextIndex = swipeTabs.findIndex((value) => value === resolvedType);
+      setPageTransitionDirection(nextIndex >= currentIndex ? 'forward' : 'backward');
+      return resolvedType;
+    });
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    if (window.localStorage.getItem(SWIPE_HINT_SEEN_KEY) === 'true') {
+      return undefined;
+    }
+
+    let hasShown = false;
+    let idleTimerId;
+    let hideTimerId;
+
+    const hideHint = () => {
+      setShowSwipeHint(false);
+      if (hideTimerId) {
+        window.clearTimeout(hideTimerId);
+      }
+    };
+
+    const showHint = () => {
+      if (hasShown) {
+        return;
+      }
+
+      hasShown = true;
+      window.localStorage.setItem(SWIPE_HINT_SEEN_KEY, 'true');
+      setShowSwipeHint(true);
+      hideTimerId = window.setTimeout(hideHint, 4200);
+    };
+
+    const resetIdleTimer = () => {
+      if (hasShown) {
+        hideHint();
+        return;
+      }
+
+      window.clearTimeout(idleTimerId);
+      idleTimerId = window.setTimeout(showHint, 3000);
+    };
+
+    const events = ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'];
+    events.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+
+    return () => {
+      window.clearTimeout(idleTimerId);
+      window.clearTimeout(hideTimerId);
+      events.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
+    };
+  }, []);
+
   useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') {
       return undefined;
     }
 
-    if (activeType === 'MINE') {
+    if (activeType === 'MINE' || activeType === 'REQUEST') {
       return undefined;
     }
 
@@ -1183,7 +1420,7 @@ function HomePage() {
       return;
     }
 
-    setActiveType((current) => {
+    switchActiveType((current) => {
       const currentIndex = swipeTabs.findIndex((value) => value === current);
       if (currentIndex === -1) {
         return current;
@@ -1379,7 +1616,7 @@ function HomePage() {
       await createCampaign(payload, token);
 
       setIsCreateCampaignOpen(false);
-      setActiveType(campaignForm.scenarioType);
+      switchActiveType(campaignForm.scenarioType);
       setCampaignForm(getInitialCampaignForm());
       setCreatedCampaignSummary({
         itemName: payload.itemName,
@@ -1595,6 +1832,147 @@ function HomePage() {
     setReviewTarget(null);
   };
 
+  const handleReviewSubmitted = (target) => {
+    if (target?.campaignId != null && target?.revieweeId != null) {
+      setReviewedReviewKeys((current) => ({
+        ...current,
+        [getReviewKey(target.campaignId, target.revieweeId)]: true,
+      }));
+
+      setChatReviewState((current) => {
+        if (target.source === 'participant') {
+          return {
+            ...current,
+            isParticipantReviewed: true,
+          };
+        }
+
+        if (target.source === 'host') {
+          const participants = Array.isArray(participationCampaign?.dashboard?.participants)
+            ? participationCampaign.dashboard.participants
+            : [];
+          const nextReviewedKeys = {
+            ...reviewedReviewKeys,
+            [getReviewKey(target.campaignId, target.revieweeId)]: true,
+          };
+          const reviewableParticipants = participants.filter((participant) => participant.userId != null);
+
+          return {
+            ...current,
+            isHostAllReviewed:
+              reviewableParticipants.length > 0 &&
+              reviewableParticipants.every((participant) =>
+                Boolean(nextReviewedKeys[getReviewKey(target.campaignId, participant.userId)])
+              ),
+          };
+        }
+
+        return current;
+      });
+    }
+
+    handleCloseReview();
+  };
+
+  const loadReviewStatusesForCampaign = useCallback(
+    async (campaign) => {
+      if (!token || !campaign?.id) {
+        return;
+      }
+
+      const isHostCampaign = isSameUserId(campaign.host?.id, user?.id) || campaign.isHost;
+
+      if (isHostCampaign) {
+        const dashboard = campaign.dashboard?.participants ? campaign.dashboard : await fetchHostDashboard(campaign.id, token);
+        const participants = Array.isArray(dashboard?.participants)
+          ? dashboard.participants.map((participant, index) => normalizeHostParticipant(participant, index))
+          : [];
+        const reviewableParticipants = participants.filter((participant) => participant.userId != null);
+
+        if (reviewableParticipants.length === 0) {
+          setChatReviewState((current) => ({
+            ...current,
+            isHostAllReviewed: false,
+          }));
+          return;
+        }
+
+        const results = await Promise.all(
+          reviewableParticipants.map(async (participant) => {
+            try {
+              const data = await checkReviewStatus(campaign.id, participant.userId, token);
+              return {
+                key: getReviewKey(campaign.id, participant.userId),
+                reviewed: isReviewAlreadyCompleted(data),
+              };
+            } catch {
+              return {
+                key: getReviewKey(campaign.id, participant.userId),
+                reviewed: false,
+              };
+            }
+          })
+        );
+
+        setReviewedReviewKeys((current) => {
+          const next = { ...current };
+          results.forEach((result) => {
+            next[result.key] = result.reviewed;
+          });
+          return next;
+        });
+        setChatReviewState((current) => ({
+          ...current,
+          isHostAllReviewed: results.length > 0 && results.every((result) => result.reviewed),
+        }));
+        return;
+      }
+
+      if (campaign.host?.id == null) {
+        return;
+      }
+
+      try {
+        const data = await checkReviewStatus(campaign.id, campaign.host.id, token);
+        const reviewed = isReviewAlreadyCompleted(data);
+        setReviewedReviewKeys((current) => ({
+          ...current,
+          [getReviewKey(campaign.id, campaign.host.id)]: reviewed,
+        }));
+        setChatReviewState((current) => ({
+          ...current,
+          isParticipantReviewed: reviewed,
+        }));
+      } catch {
+        setChatReviewState((current) => ({
+          ...current,
+          isParticipantReviewed: false,
+        }));
+      }
+    },
+    [token, user?.id]
+  );
+
+  useEffect(() => {
+    if (!chatCampaign) {
+      setChatReviewState({
+        isParticipantReviewed: false,
+        isHostAllReviewed: false,
+      });
+      return;
+    }
+
+    void loadReviewStatusesForCampaign(chatCampaign);
+  }, [chatCampaign?.id, chatCampaign?.status, loadReviewStatusesForCampaign]);
+
+  useEffect(() => {
+    if (!participationCampaign || participationCampaign.managementMode !== 'HOST') {
+      return;
+    }
+
+    void loadReviewStatusesForCampaign(participationCampaign);
+  }, [loadReviewStatusesForCampaign, participationCampaign?.id, participationCampaign?.managementMode, participationCampaign?.status]);
+
   const handleOpenParticipation = async (deal) => {
     if (!token) {
       setIsLoginModalOpen(true);
@@ -1626,7 +2004,7 @@ function HomePage() {
 
     try {
       const nextDeal = await refreshMineCampaignsBeforeOpen(deal);
-      const isHostDeal = nextDeal.host?.id === user?.id || nextDeal.isHost;
+      const isHostDeal = isSameUserId(nextDeal.host?.id, user?.id) || nextDeal.isHost;
 
       if (isHostDeal) {
         const dashboard = await fetchHostDashboard(nextDeal.id, token);
@@ -1849,6 +2227,257 @@ function HomePage() {
       };
     }
   };
+
+  const handleCampaignStatusChange = useCallback(
+    async ({ campaignId, status, message, source = '' }) => {
+      if (!campaignId || !status) {
+        return;
+      }
+
+      const normalizedStatus = status.toString().toUpperCase();
+      const applyStatus = (campaign) =>
+        Number(campaign?.id) === Number(campaignId)
+          ? {
+              ...campaign,
+              status: normalizedStatus,
+              campaignStatus: normalizedStatus,
+              dashboard: campaign.dashboard
+                ? {
+                    ...campaign.dashboard,
+                    status: normalizedStatus,
+                  }
+                : campaign.dashboard,
+            }
+          : campaign;
+
+      setCampaigns((current) => current.map(applyStatus));
+      setChatCampaign((current) => (current ? applyStatus(current) : current));
+      setParticipationCampaign((current) => (current ? applyStatus(current) : current));
+
+      if (message && source !== 'topic') {
+        setChatStatusEvent({
+          id: `${campaignId}-${normalizedStatus}-${Date.now()}`,
+          campaignId,
+          status: normalizedStatus,
+          message,
+        });
+      }
+
+      if (!token) {
+        return;
+      }
+
+      const currentCampaign =
+        chatCampaign && Number(chatCampaign.id) === Number(campaignId)
+          ? chatCampaign
+          : participationCampaign && Number(participationCampaign.id) === Number(campaignId)
+            ? participationCampaign
+            : campaigns.find((campaign) => Number(campaign.id) === Number(campaignId));
+      const isHostCampaign = isSameUserId(currentCampaign?.host?.id, user?.id) || currentCampaign?.isHost;
+
+      try {
+        if (isHostCampaign) {
+          const dashboard = await fetchHostDashboard(campaignId, token);
+          const normalizedDashboard = normalizeHostDashboard(dashboard);
+
+          setChatCampaign((current) =>
+            current && Number(current.id) === Number(campaignId)
+              ? {
+                  ...current,
+                  status: normalizedDashboard.status || normalizedStatus,
+                  dashboard: normalizedDashboard,
+                }
+              : current
+          );
+          setParticipationCampaign((current) =>
+            current && Number(current.id) === Number(campaignId)
+              ? buildHostParticipationCampaign(
+                  {
+                    ...current,
+                    status: normalizedDashboard.status || normalizedStatus,
+                  },
+                  dashboard
+                )
+              : current
+          );
+          setParticipationQuantityDraft(String(normalizedDashboard.hostReservedQuantity));
+          return;
+        }
+
+        const participation = await fetchMyParticipation(campaignId, token);
+        const participantStatus = (
+          participation?.myParticipantStatus ??
+          participation?.my_participant_status ??
+          participation?.participantStatus ??
+          participation?.participant_status ??
+          ''
+        )
+          .toString()
+          .toUpperCase();
+        const joinedQuantity = Number(
+          participation?.quantity ??
+            participation?.joinedQuantity ??
+            participation?.joined_quantity ??
+            0
+        );
+        const participantPatch = {
+          status: normalizedStatus,
+          campaignStatus: normalizedStatus,
+          myParticipantStatus: participantStatus,
+          participantStatus,
+          joined: participantStatus ? isViewableParticipantStatus(participantStatus) : Boolean(participation?.joined),
+          quantity: joinedQuantity,
+        };
+
+        setChatCampaign((current) =>
+          current && Number(current.id) === Number(campaignId)
+            ? {
+                ...current,
+                ...participantPatch,
+              }
+            : current
+        );
+        setParticipationCampaign((current) =>
+          current && Number(current.id) === Number(campaignId)
+            ? {
+                ...current,
+                ...participantPatch,
+                managementMode: current.managementMode ?? 'JOINED',
+              }
+            : current
+        );
+        setParticipationQuantityDraft((current) => (joinedQuantity > 0 ? String(joinedQuantity) : current));
+      } catch (error) {
+        setCampaignError(error instanceof Error ? error.message : '團購狀態刷新失敗');
+      }
+    },
+    [campaigns, chatCampaign, participationCampaign, token, user?.id]
+  );
+
+  const refreshOpenChatCampaign = useCallback(
+    async (campaignId, message = '') => {
+      if (!campaignId || !token) {
+        return;
+      }
+
+      const latestCampaign = await findCampaignForNotification(campaignId, { forceRemote: true });
+      if (!latestCampaign) {
+        return;
+      }
+
+      setCampaigns((current) =>
+        current.map((campaign) =>
+          Number(campaign.id) === Number(campaignId)
+            ? {
+                ...campaign,
+                ...latestCampaign,
+              }
+            : campaign
+        )
+      );
+      setChatCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              ...latestCampaign,
+            }
+          : current
+      );
+      setParticipationCampaign((current) =>
+        current && Number(current.id) === Number(campaignId)
+          ? {
+              ...current,
+              ...latestCampaign,
+            }
+          : current
+      );
+
+      if (message) {
+        setChatStatusEvent({
+          id: `${campaignId}-notification-${Date.now()}`,
+          campaignId,
+          status: latestCampaign.status ?? latestCampaign.campaignStatus ?? '',
+          message,
+        });
+      }
+
+      if (!isSameUserId(latestCampaign.host?.id, user?.id) && !latestCampaign.isHost) {
+        try {
+          const participation = await fetchMyParticipation(campaignId, token);
+          const participantStatus = (
+            participation?.myParticipantStatus ??
+            participation?.my_participant_status ??
+            participation?.participantStatus ??
+            participation?.participant_status ??
+            latestCampaign.myParticipantStatus ??
+            ''
+          )
+            .toString()
+            .toUpperCase();
+          const joinedQuantity = Number(
+            participation?.quantity ??
+              participation?.joinedQuantity ??
+              participation?.joined_quantity ??
+              latestCampaign.quantity ??
+              0
+          );
+
+          setChatCampaign((current) =>
+            current && Number(current.id) === Number(campaignId)
+              ? {
+                  ...current,
+                  myParticipantStatus: participantStatus,
+                  participantStatus,
+                  joined: participantStatus ? isViewableParticipantStatus(participantStatus) : current.joined,
+                  quantity: joinedQuantity || current.quantity,
+                }
+              : current
+          );
+        } catch {
+          // The latest campaign payload is still enough to update status-driven chat actions.
+        }
+      }
+    },
+    [findCampaignForNotification, token, user?.id]
+  );
+
+  useEffect(() => {
+    if (!liveNotification?.referenceId || !chatCampaign?.id) {
+      return;
+    }
+
+    if (Number(liveNotification.referenceId) !== Number(chatCampaign.id)) {
+      return;
+    }
+
+    const notificationKey =
+      liveNotification.id ?? `${liveNotification.type}-${liveNotification.referenceId}-${liveNotification.createdAt}`;
+    if (lastHandledChatNotificationRef.current === notificationKey) {
+      return;
+    }
+    lastHandledChatNotificationRef.current = notificationKey;
+
+    const statusByNotificationType = {
+      CAMPAIGN_FULL: 'FULL',
+      CAMPAIGN_DELIVERED: 'DELIVERED',
+      CAMPAIGN_COMPLETED: 'COMPLETED',
+      CAMPAIGN_CANCELLED: 'CANCELLED',
+    };
+    const nextStatus = statusByNotificationType[liveNotification.type];
+
+    if (!nextStatus) {
+      void refreshOpenChatCampaign(liveNotification.referenceId, liveNotification.content);
+      return;
+    }
+
+    void handleCampaignStatusChange({
+      campaignId: liveNotification.referenceId,
+      status: nextStatus,
+      message: liveNotification.content,
+      source: 'notification',
+    });
+    void refreshOpenChatCampaign(liveNotification.referenceId);
+  }, [chatCampaign?.id, handleCampaignStatusChange, liveNotification, refreshOpenChatCampaign]);
 
   const refreshHostParticipationCampaign = async (campaignId) => {
     const dashboard = await fetchHostDashboard(campaignId, token);
@@ -2131,6 +2760,7 @@ function HomePage() {
         authError={authError}
         onClose={() => setIsLoginModalOpen(false)}
         onLineLogin={handleLineLogin}
+        onDevLogin={handleDevLogin}
       />
 
       <ProfileModal
@@ -2151,8 +2781,11 @@ function HomePage() {
         labels={LABELS}
         isOpen={isNotificationsOpen}
         notifications={notifications}
+        readNotifications={readNotifications}
         isLoading={isNotificationsLoading}
+        isReadLoading={isReadNotificationsLoading}
         error={notificationsError}
+        readError={readNotificationsError}
         onClose={() => setIsNotificationsOpen(false)}
         onNotificationAction={handleNotificationAction}
       />
@@ -2217,6 +2850,10 @@ function HomePage() {
         onConfirmReceipt={handleConfirmCampaignReceipt}
         onRaiseDispute={handleRaiseCampaignDispute}
         onOpenReview={handleOpenReview}
+        onCampaignStatusChange={handleCampaignStatusChange}
+        externalStatusEvent={chatStatusEvent}
+        isParticipantReviewCompleted={chatReviewState.isParticipantReviewed}
+        isHostReviewCompleted={chatReviewState.isHostAllReviewed}
         onClose={() => setChatCampaign(null)}
       />
 
@@ -2235,6 +2872,7 @@ function HomePage() {
         onUnlockRevision={handleUnlockCampaign}
         onKickParticipant={handleParticipantStatusAction}
         onOpenReview={handleOpenReview}
+        reviewedReviewKeys={reviewedReviewKeys}
         onOpenChat={handleOpenChatFromParticipation}
         canOpenChat={canOpenCampaignChat(participationCampaign)}
       />
@@ -2244,11 +2882,17 @@ function HomePage() {
         token={token}
         reviewTarget={reviewTarget}
         onClose={handleCloseReview}
-        onSubmitted={handleCloseReview}
+        onSubmitted={handleReviewSubmitted}
       />
 
       <main className="content">
-        {activeType === 'MINE' ? (
+        <div key={activeType} className={`page-transition page-transition-${pageTransitionDirection}`}>
+        {activeType === 'REQUEST' ? (
+          <section className="request-page-header">
+            <p className="eyebrow">發起託購</p>
+            <h2>Coming soon</h2>
+          </section>
+        ) : activeType === 'MINE' ? (
           <section className="mine-page-header">
             <p className="eyebrow">我的團購</p>
           </section>
@@ -2260,7 +2904,7 @@ function HomePage() {
                   key={option.value}
                   type="button"
                   className={activeType === option.value ? 'mode-button active' : 'mode-button'}
-                  onClick={() => setActiveType(option.value)}
+                  onClick={() => switchActiveType(option.value)}
                 >
                   {option.label}
                 </button>
@@ -2269,7 +2913,12 @@ function HomePage() {
           </div>
         )}
 
-        {activeType === 'MINE' ? (
+        {activeType === 'REQUEST' ? (
+          <section className="request-coming-soon">
+            <p>託購頁面準備中</p>
+            <span>之後會在這裡建立與管理託購需求。</span>
+          </section>
+        ) : activeType === 'MINE' ? (
           <div className="mine-filter-stack">
             <section className="category-strip">
               {localizedMyCampaignScopes.map((option) => (
@@ -2310,77 +2959,120 @@ function HomePage() {
             </label>
           </div>
         ) : (
-          <section className="category-strip">
-            <button
-              type="button"
-              className={activeCategory === 0 ? 'category-button active' : 'category-button'}
-              onClick={() => setActiveCategory(0)}
-            >
-              {LABELS.all}
-            </button>
-            {categories.map((category) => (
+          <div className="category-scroll-area">
+            <section className="category-strip">
               <button
-                key={category.id}
                 type="button"
-                className={activeCategory === category.id ? 'category-button active' : 'category-button'}
-                onClick={() => setActiveCategory(category.id)}
+                className={activeCategory === 0 ? 'category-button active' : 'category-button'}
+                onClick={() => setActiveCategory(0)}
               >
-                {category.icon ? `${category.icon} ${category.name}` : category.name}
+                {LABELS.all}
               </button>
-            ))}
-          </section>
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  className={activeCategory === category.id ? 'category-button active' : 'category-button'}
+                  onClick={() => setActiveCategory(category.id)}
+                >
+                  {category.icon ? `${category.icon} ${category.name}` : category.name}
+                </button>
+              ))}
+            </section>
+          </div>
         )}
 
-        {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
-        {referenceError && <p className="inline-error">{referenceError}</p>}
-        {campaignError && <p className="inline-error">{campaignError}</p>}
+        {activeType !== 'REQUEST' && (
+          <>
+            <section className="deal-grid">
+              {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
+              {referenceError && <p className="inline-error">{referenceError}</p>}
+              {campaignError && <p className="inline-error">{campaignError}</p>}
 
-        <section className="deal-grid">
-          {!isInitialLoading && campaigns.length === 0 && !campaignError && (
-            <p className="state-message empty-card">{LABELS.emptyDeals}</p>
-          )}
+              {!isInitialLoading && campaigns.length === 0 && !campaignError && (
+                <p className="state-message empty-card">{LABELS.emptyDeals}</p>
+              )}
 
-          {campaigns.map((deal) => (
-            <DealCard
-              key={deal.id}
-              labels={uiLabels}
-              deal={deal}
-              countdownNow={countdownNow}
-              formatCountdown={formatCountdown}
-              formatDateTime={formatDateTime}
-              getScenarioLabel={getScenarioLabel}
-              getTypeClass={getTypeClass}
-              onJoin={handleOpenJoinCampaign}
-              onOpenGallery={handleOpenGallery}
-              onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
-              onOpenParticipation={
-                activeType === 'MINE'
-                  ? handleOpenParticipation
-                  : undefined
-              }
-              onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
-              showJoinAction={activeType !== 'MINE' && deal.host?.id !== user?.id}
-            />
-          ))}
-        </section>
+              {campaigns.map((deal) => (
+                <DealCard
+                  key={deal.id}
+                  labels={uiLabels}
+                  deal={deal}
+                  countdownNow={countdownNow}
+                  formatCountdown={formatCountdown}
+                  formatDateTime={formatDateTime}
+                  getScenarioLabel={getScenarioLabel}
+                  getTypeClass={getTypeClass}
+                  onJoin={handleOpenJoinCampaign}
+                  onOpenGallery={handleOpenGallery}
+                  onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
+                  onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
+                  onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
+                  showJoinAction={activeType !== 'MINE' && !isSameUserId(deal.host?.id, user?.id)}
+                  isHighlighted={String(deal.id) === String(focusedCampaignId)}
+                />
+              ))}
+            </section>
+            {renderPageDots()}
 
-        <div ref={sentinelRef} className="list-sentinel">
-          {isInitialLoading || isLoadingMore ? LABELS.loadingMore : hasMore ? LABELS.loadingMore : LABELS.noMoreData}
+            <div ref={sentinelRef} className="list-sentinel">
+              {isInitialLoading || isLoadingMore ? LABELS.loadingMore : hasMore ? LABELS.loadingMore : LABELS.noMoreData}
+            </div>
+          </>
+        )}
         </div>
       </main>
 
-      <footer className="bottom-bar">
-        <label className="search-box">
+      <footer className={isSearchExpanded ? 'bottom-bar search-expanded' : 'bottom-bar'}>
+        <label
+          className="search-box"
+          onClick={() => {
+            setIsSearchExpanded(true);
+            window.setTimeout(() => searchInputRef.current?.focus(), 0);
+          }}
+        >
+          <SearchIcon />
+          <span className="search-box-label">搜尋</span>
           <input
+            ref={searchInputRef}
             type="search"
             placeholder={LABELS.searchPlaceholder}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            onFocus={() => setIsSearchExpanded(true)}
+            onBlur={() => {
+              if (!search.trim()) {
+                setIsSearchExpanded(false);
+              }
+            }}
           />
         </label>
-        <button type="button" className="create-button" onClick={handleOpenCreateCampaign}>
-          {LABELS.createDeal}
-        </button>
+        {activeType === 'REQUEST' ? (
+          <>
+            <button type="button" className="create-button" onClick={() => switchActiveType('SCHEDULED')}>
+              團購
+            </button>
+            <button type="button" className="create-button request-button active" onClick={() => switchActiveType('REQUEST')}>
+              建立託購
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="create-button request-button" onClick={() => switchActiveType('REQUEST')}>
+              託購
+            </button>
+            <button
+              type="button"
+              className="create-button active"
+              onClick={() => {
+                switchActiveType('SCHEDULED');
+                handleOpenCreateCampaign('SCHEDULED');
+              }}
+            >
+              開團
+            </button>
+          </>
+        )}
       </footer>
     </div>
   );

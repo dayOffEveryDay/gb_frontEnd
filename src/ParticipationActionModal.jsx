@@ -15,6 +15,7 @@ function ParticipationActionModal({
   onUnlockRevision,
   onKickParticipant,
   onOpenReview,
+  reviewedReviewKeys = {},
   onOpenChat,
   canOpenChat,
 }) {
@@ -242,6 +243,9 @@ function ParticipationActionModal({
                     <ul className="participation-list">
                       {participants.map((participant) => {
                         const participantKey = participant.participantId ?? participant.userId;
+                        const isParticipantReviewed =
+                          participant?.userId != null &&
+                          Boolean(reviewedReviewKeys[`${Number(campaign.id)}:${Number(participant.userId)}`]);
                         const canKickParticipant = (participant.status ?? '').toString().toUpperCase() === 'JOINED';
                         const isKickRevealed =
                           canKickParticipant &&
@@ -287,6 +291,9 @@ function ParticipationActionModal({
                                       className="text-button participation-review-button"
                                       onClick={(event) => {
                                         event.stopPropagation();
+                                        if (isParticipantReviewed) {
+                                          return;
+                                        }
                                         onOpenReview({
                                           campaignId: campaign.id,
                                           revieweeId: participant.userId,
@@ -294,7 +301,8 @@ function ParticipationActionModal({
                                           source: 'host',
                                         });
                                       }}
-                                      disabled={isSubmitting}
+                                      disabled={isSubmitting || isParticipantReviewed}
+                                      data-label={isParticipantReviewed ? '已評價' : '評價'}
                                     >
                                       評價
                                     </button>
