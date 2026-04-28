@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ChatIcon, GhostIcon } from './Icons';
+import { ChatRoomsIcon, GhostIcon } from './Icons';
 
 function ParticipationActionModal({
   isOpen,
@@ -18,6 +18,8 @@ function ParticipationActionModal({
   reviewedReviewKeys = {},
   onOpenChat,
   canOpenChat,
+  onOpenImageOrder,
+  canReorderImages = false,
 }) {
   const [isCancelConfirming, setIsCancelConfirming] = useState(false);
   const [pendingKickParticipant, setPendingKickParticipant] = useState(null);
@@ -163,7 +165,7 @@ function ParticipationActionModal({
             title={canOpenChat ? '\u524d\u5f80\u804a\u5929\u5ba4' : '\u672a\u6eff\u55ae\u7121\u6cd5\u958b\u555f\u804a\u5929\u5ba4'}
             aria-label={'\u524d\u5f80\u804a\u5929\u5ba4'}
           >
-            <ChatIcon />
+            <ChatRoomsIcon />
           </button>
         </div>
 
@@ -201,20 +203,26 @@ function ParticipationActionModal({
                       onChange={(event) => onChangeQuantity(event.target.value)}
                     />
                   </label>
-                  <button
-                    type="button"
-                    className={allowRevision ? 'toggle-switch is-on' : 'toggle-switch'}
-                    role="switch"
-                    aria-checked={allowRevision}
-                    aria-label={'\u5141\u8a31\u53ef\u6539\u6578\u91cf'}
-                    onClick={() => onUnlockRevision?.(campaign.id)}
-                    disabled={isSubmitting || (!canUnlockRevision && !allowRevision)}
-                  >
-                    <span className="toggle-switch-label">{'\u5141\u8a31\u53ef\u6539\u6578\u91cf'}</span>
-                    <span className="toggle-switch-track" aria-hidden="true">
-                      <span className="toggle-switch-thumb" />
-                    </span>
-                  </button>
+                  <div className={allowRevision ? 'participation-permission-card is-open' : 'participation-permission-card'}>
+                    <div className="participation-permission-copy">
+                      <span className="participation-permission-title">團員修改數量</span>
+                      <span className="participation-permission-description">
+                        {allowRevision ? '已開放，團員可自行調整認購數量。' : '目前未開放，滿單後可開放團員調整認購數量。'}
+                      </span>
+                    </div>
+                    {allowRevision ? (
+                      <span className="participation-permission-status">已開放</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="participation-permission-button"
+                        onClick={() => onUnlockRevision?.(campaign.id)}
+                        disabled={isSubmitting || !canUnlockRevision}
+                      >
+                        {isSubmitting ? '處理中...' : '開放修改'}
+                      </button>
+                    )}
+                  </div>
                   {!status.includes('FULL') && !allowRevision && (
                     <p className="panel-note">{'\u5718\u8cfc\u9700\u5148\u6eff\u55ae\uff0c\u624d\u80fd\u958b\u555f\u6eff\u55ae\u5f8c\u4fee\u6539\u3002'}</p>
                   )}
@@ -227,6 +235,21 @@ function ParticipationActionModal({
                   </div>
                   <p className="participation-link-copy">{participants.length > 0 ? '\u67e5\u770b\u4e26\u7ba1\u7406\u5718\u54e1' : '\u76ee\u524d\u6c92\u6709\u5718\u54e1'}</p>
                 </button>
+
+                {canReorderImages && (
+                  <button
+                    type="button"
+                    className="participation-panel participation-link-panel"
+                    onClick={() => onOpenImageOrder?.(campaign)}
+                    disabled={isSubmitting || !onOpenImageOrder}
+                  >
+                    <div className="participation-row">
+                      <span className="participation-label">圖片順序</span>
+                      <strong>{campaign.imageUrls?.length ?? 0} 張</strong>
+                    </div>
+                    <p className="participation-link-copy">調整封面與顯示順序</p>
+                  </button>
+                )}
               </section>
 
               <section className="participation-host-page participation-host-page-secondary">

@@ -43,9 +43,13 @@ const LINE_CALLBACK_URL = getLineCallbackUrl();
 const LINE_CLIENT_ID = getLineClientId();
 
 const TOKEN_KEY = 'jwt_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
 const USER_KEY = 'current_user';
 const LINE_STATE_KEY = 'line_login_state';
 const LINE_LOGIN_SUCCESS_MESSAGE = 'line-login-success';
+export const AUTH_STORAGE_EVENT = 'gb-auth-change';
+
+let refreshRequestPromise = null;
 
 // 組出含 query string 的完整 API 請求網址。
 function buildUrl(path, query = {}) {
@@ -60,49 +64,164 @@ function buildUrl(path, query = {}) {
   return url.toString();
 }
 
-// 共用 request 包裝，統一處理 JSON、授權標頭與錯誤訊息。
-async function request(path, { method = 'GET', body, token, headers = {}, query } = {}) {
+function dispatchAuthStorageChange() {
+  window.dispatchEvent(new Event(AUTH_STORAGE_EVENT));
+}
+
+function buildRequestHeaders({ body, headers, token }) {
+  return {
+    ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...headers,
+  };
+}
+
+async function parseResponse(response) {
+  const contentType = response.headers.get('content-type') ?? '';
+  return contentType.includes('application/json') ? await response.json() : null;
+}
+
+function createApiError(data, fallbackMessage = 'API request failed.') {
+  return new Error(data?.message || data?.error || fallbackMessage);
+}
+
+async function executeRequest(path, { method = 'GET', body, token, headers = {}, query } = {}) {
+  const resolvedToken = token || getStoredToken();
   const response = await fetch(buildUrl(path, query), {
     method,
-    headers: {
-      ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
+    headers: buildRequestHeaders({ body, headers, token: resolvedToken }),
     body:
       body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
   });
 
-  const contentType = response.headers.get('content-type') ?? '';
-  const data = contentType.includes('application/json') ? await response.json() : null;
+  const data = await parseResponse(response);
+  return { response, data };
+}
 
-  if (!response.ok) {
-    const message = data?.message || data?.error || 'API request failed.';
-    throw new Error(message);
+async function refreshAccessToken() {
+  const refreshToken = getStoredRefreshToken();
+
+  if (!refreshToken) {
+    throw new Error('Refresh token is missing.');
   }
 
-  return data;
+  if (!refreshRequestPromise) {
+    refreshRequestPromise = (async () => {
+      const response = await fetch(buildUrl('/api/v1/auth/refresh'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+      const data = await parseResponse(response);
+
+      if (!response.ok || !data?.token) {
+        throw createApiError(data, 'Failed to refresh access token.');
+      }
+
+      setStoredAuth({
+        token: data.token,
+        refreshToken: data.refreshToken ?? refreshToken,
+      });
+
+      return data.token;
+    })().finally(() => {
+      refreshRequestPromise = null;
+    });
+  }
+
+  return refreshRequestPromise;
+}
+
+// 共用 request 包裝，統一處理 JSON、授權標頭、refresh token 與錯誤訊息。
+async function request(path, options = {}) {
+  const { skipAuthRefresh = false, ...requestOptions } = options;
+  const { response, data } = await executeRequest(path, requestOptions);
+
+  if (response.ok) {
+    return data;
+  }
+
+  const canRefresh =
+    !skipAuthRefresh &&
+    !path.startsWith('/api/v1/auth/') &&
+    (response.status === 401 || response.status === 403) &&
+    Boolean(requestOptions.token || getStoredToken()) &&
+    Boolean(getStoredRefreshToken());
+
+  if (canRefresh) {
+    try {
+      const nextToken = await refreshAccessToken();
+      const retryResult = await executeRequest(path, {
+        ...requestOptions,
+        token: nextToken,
+      });
+
+      if (retryResult.response.ok) {
+        return retryResult.data;
+      }
+
+      throw createApiError(retryResult.data);
+    } catch (error) {
+      clearStoredAuth();
+      throw error instanceof Error ? error : new Error('Login expired. Please sign in again.');
+    }
+  }
+
+  throw createApiError(data);
 }
 
 export function getStoredToken() {
   return localStorage.getItem(TOKEN_KEY) ?? '';
 }
 
-// 將登入成功後的 token 與使用者資訊持久化到 localStorage。
-export function setStoredAuth({ token, user }) {
-  if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
+export function getStoredRefreshToken() {
+  return localStorage.getItem(REFRESH_TOKEN_KEY) ?? '';
+}
+
+// 將登入成功後的 token / refresh token 與使用者資訊持久化到 localStorage。
+export function setStoredAuth({ token, refreshToken, user } = {}) {
+  let didChange = false;
+
+  if (token !== undefined) {
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+    }
+    didChange = true;
   }
 
-  if (user) {
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (refreshToken !== undefined) {
+    if (refreshToken) {
+      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    } else {
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+    }
+    didChange = true;
+  }
+
+  if (user !== undefined) {
+    if (user) {
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(USER_KEY);
+    }
+    didChange = true;
+  }
+
+  if (didChange) {
+    dispatchAuthStorageChange();
   }
 }
 
 // 登出時清空本地登入資訊。
 export function clearStoredAuth() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  dispatchAuthStorageChange();
 }
 
 // 從 localStorage 還原使用者資訊，並處理壞掉的 JSON。
@@ -255,6 +374,24 @@ export function fetchCampaignChatMessages(campaignId, token) {
   });
 }
 
+export function uploadChatImages(files, token, campaignId) {
+  const formData = new FormData();
+
+  files.forEach((file) => {
+    formData.append('files', file);
+  });
+
+  if (campaignId !== undefined && campaignId !== null && campaignId !== '') {
+    formData.append('campaignId', campaignId);
+  }
+
+  return request('/api/v1/files/upload', {
+    method: 'POST',
+    body: formData,
+    token,
+  });
+}
+
 export function fetchMyCreditScoreLogs(params, token) {
   return request('/api/v1/credit-scores/me/logs', {
     query: params,
@@ -348,6 +485,16 @@ export function hostReviseCampaign(campaignId, payload, token) {
   return request(`/api/v1/campaigns/${campaignId}/host-revise`, {
     method: 'PUT',
     body: payload,
+    token,
+  });
+}
+
+export function updateCampaignImageOrder(campaignId, imageUrls, token) {
+  return request(`/api/v1/campaigns/${campaignId}/images/order`, {
+    method: 'PUT',
+    body: {
+      imageUrls,
+    },
     token,
   });
 }

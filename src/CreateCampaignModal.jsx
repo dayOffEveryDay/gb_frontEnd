@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getSuggestedMeetupTime } from './homeUtils';
 
+const MAX_CAMPAIGN_IMAGES = 3;
+
+function getImageFileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
 function CreateCampaignModal({
   labels,
   isOpen,
@@ -258,21 +264,42 @@ function CreateCampaignModal({
               multiple
               required
               onChange={(event) => {
-                const nextImages = Array.from(event.target.files ?? []).slice(0, 3);
+                const selectedImages = Array.from(event.target.files ?? []);
+                if (selectedImages.length === 0) {
+                  event.target.value = '';
+                  return;
+                }
+
+                const existingImages = campaignForm.images ?? [];
+                const existingImageKeys = new Set(existingImages.map(getImageFileKey));
+                const uniqueSelectedImages = selectedImages.filter((file) => !existingImageKeys.has(getImageFileKey(file)));
+                const availableSlots = Math.max(0, MAX_CAMPAIGN_IMAGES - existingImages.length);
+                const imagesToAdd = uniqueSelectedImages.slice(0, availableSlots);
+                const nextImages = [...existingImages, ...imagesToAdd];
+
                 setCampaignForm((current) => ({
                   ...current,
                   images: nextImages,
                 }));
-                setActivePreviewIndex(0);
 
-                if ((event.target.files?.length ?? 0) > 3) {
-                  setCreateCampaignError('圖片最多只能選 3 張，系統只會保留前 3 張。');
+                if (imagesToAdd.length > 0) {
+                  setActivePreviewIndex(existingImages.length);
+                }
+
+                if (availableSlots === 0) {
+                  setCreateCampaignError('圖片最多只能選 3 張，請先刪除現有圖片再新增。');
+                } else if (selectedImages.length > 0 && uniqueSelectedImages.length === 0) {
+                  setCreateCampaignError('選取的圖片已在清單中。');
+                } else if (uniqueSelectedImages.length > imagesToAdd.length) {
+                  setCreateCampaignError(`圖片最多只能選 3 張，這次已補上 ${imagesToAdd.length} 張。`);
                 } else {
                   setCreateCampaignError('');
                 }
+
+                event.target.value = '';
               }}
             />
-            <span className="field-hint">可複選，最多 3 張。預覽一次只顯示一張，可左右切換。</span>
+            <span className="field-hint">可分次選取或複選，最多 3 張。預覽一次只顯示一張，可左右切換。</span>
             {activePreview && (
               <div className="image-preview-card">
                 <div
@@ -291,17 +318,14 @@ function CreateCampaignModal({
                       <button type="button" className="image-preview-nav next" onClick={movePreviewRight} aria-label="下一張">
                         ›
                       </button>
+                      <span className="image-preview-counter">
+                        {activePreviewIndex + 1} / {imagePreviews.length}
+                      </span>
                     </>
                   )}
                 </div>
                 <div className="image-preview-meta">
                   <strong title={activePreview.file.name}>{activePreview.file.name}</strong>
-                  <span>{Math.round(activePreview.file.size / 1024)} KB</span>
-                  {imagePreviews.length > 1 && (
-                    <span className="image-preview-counter">
-                      {activePreviewIndex + 1} / {imagePreviews.length}
-                    </span>
-                  )}
                 </div>
                 <div className="image-preview-actions">
                   <button
@@ -338,6 +362,26 @@ function CreateCampaignModal({
                     刪除
                   </button>
                 </div>
+                {imagePreviews.length > 1 && (
+                  <div className="image-preview-strip" aria-label="已選圖片縮圖">
+                    {imagePreviews.map((preview, index) => (
+                      <button
+                        key={`${preview.file.name}-${index}`}
+                        type="button"
+                        className={
+                          index === activePreviewIndex
+                            ? 'image-preview-thumb-button active'
+                            : 'image-preview-thumb-button'
+                        }
+                        onClick={() => setActivePreviewIndex(index)}
+                        aria-label={`查看第 ${index + 1} 張圖片`}
+                      >
+                        <img src={preview.url} alt="" className="image-preview-thumbnail" />
+                        <span>{index === 0 ? '封面' : index + 1}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </label>

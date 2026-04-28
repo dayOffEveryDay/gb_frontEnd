@@ -1,4 +1,4 @@
-import { AvatarIcon, BellIcon, RefreshIcon } from './Icons';
+import { AvatarIcon, BellIcon, ChatRoomsIcon, RefreshIcon } from './Icons';
 
 function HomeTopBar({
   labels,
@@ -6,9 +6,11 @@ function HomeTopBar({
   user,
   stores,
   activeStore,
+  chatUnreadRoomCount = 0,
   unreadCount = 0,
   onChangeStore,
   onOpenProfile,
+  onOpenChatRooms,
   onOpenNotifications,
   onRefresh,
   isRefreshing,
@@ -56,17 +58,32 @@ function HomeTopBar({
         </button>
 
         {token ? (
-          <button
-            type="button"
-            className="notification-trigger icon-button"
-            onClick={onOpenNotifications}
-            aria-label="notifications"
-          >
-            <BellIcon />
-            {unreadCount > 0 && (
-              <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
-            )}
-          </button>
+          <>
+            <button
+              type="button"
+              className="chat-room-trigger icon-button"
+              onClick={onOpenChatRooms}
+              aria-label="聊天室"
+              title="聊天室"
+            >
+              <ChatRoomsIcon />
+              {chatUnreadRoomCount > 0 && (
+                <span className="notification-badge">{chatUnreadRoomCount > 99 ? '99+' : chatUnreadRoomCount}</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="notification-trigger icon-button"
+              onClick={onOpenNotifications}
+              aria-label="notifications"
+            >
+              <BellIcon />
+              {unreadCount > 0 && (
+                <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+              )}
+            </button>
+          </>
         ) : (
           <div className="topbar-side right">
             <span className="panel-note">{labels.latestMessages}</span>

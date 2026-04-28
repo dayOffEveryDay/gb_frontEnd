@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import './App.css';
 import { AvatarIcon, BulbIcon, ExpandIcon, MoreIcon, OpenCardIcon } from './Icons';
 import {
+  AUTH_STORAGE_EVENT,
   blockUser,
   clearStoredAuth,
   fetchMyBlockedUsers,
@@ -121,11 +122,33 @@ function formatCreditScoreLogDate(value) {
   }).format(date);
 }
 
+function areUsersEquivalent(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left && !right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    String(left.id ?? '') === String(right.id ?? '') &&
+    (left.displayName ?? '') === (right.displayName ?? '') &&
+    (left.profileImageUrl ?? left.avatarUrl ?? '') === (right.profileImageUrl ?? right.avatarUrl ?? '') &&
+    Boolean(left.hasCostcoMembership ?? left.has_costco_membership) ===
+      Boolean(right.hasCostcoMembership ?? right.has_costco_membership)
+  );
+}
+
 function UserProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams();
-  const [token] = useState(() => getStoredToken());
+  const [token, setToken] = useState(() => getStoredToken());
   const [currentUser, setCurrentUser] = useState(() => getStoredUser());
   const routeUser = location.state?.user ?? null;
 
@@ -178,6 +201,32 @@ function UserProfilePage() {
     document.documentElement.dataset.theme = themeMode;
     localStorage.setItem('theme_mode', themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    const syncAuthState = () => {
+      const nextToken = getStoredToken();
+      const nextUser = getStoredUser();
+
+      setToken((current) => (current === nextToken ? current : nextToken));
+      setCurrentUser((current) => (areUsersEquivalent(current, nextUser) ? current : nextUser));
+    };
+
+    const handleStorageChange = (event) => {
+      if (event.key && !['jwt_token', 'refresh_token', 'current_user'].includes(event.key)) {
+        return;
+      }
+
+      syncAuthState();
+    };
+
+    window.addEventListener(AUTH_STORAGE_EVENT, syncAuthState);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener(AUTH_STORAGE_EVENT, syncAuthState);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   useEffect(() => {
     setProfile((current) => normalizeProfileResponse(current, fallbackUser));

@@ -15,7 +15,7 @@ export const LABELS = {
   loginPromptTitle: '登入後即可管理個人資料與發起團購',
   loginPromptBody: '將會透過 LINE OAuth popup 完成登入，成功後會取得 JWT Token。',
   close: '關閉',
-  currentStore: '目前店面',
+  currentStore: '賣場',
   searchPlaceholder: '搜尋商品名稱、關鍵字或類別',
   createDeal: '發起團購',
   remaining: '剩餘數量',

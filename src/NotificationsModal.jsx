@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { ChatIcon } from './Icons';
 
 function formatNotificationTime(value) {
   if (!value) {
@@ -32,7 +31,7 @@ function getNotificationAction(notification, isReadTab) {
     canOpenChat,
     canOpenReview,
     hasAction,
-    label: canOpenChat ? '前往聊天室' : canOpenReview ? '前往評價' : '標為已讀',
+    label: hasAction ? '前往' : '標為已讀',
   };
 }
 
@@ -45,6 +44,8 @@ function NotificationsModal({
   isReadLoading = false,
   error,
   readError = '',
+  isSoundEnabled = true,
+  onToggleSound,
   onClose,
   onNotificationAction,
 }) {
@@ -69,6 +70,19 @@ function NotificationsModal({
             {labels.close}
           </button>
         </div>
+
+        <button
+          type="button"
+          className={isSoundEnabled ? 'toggle-switch notification-sound-toggle is-on' : 'toggle-switch notification-sound-toggle'}
+          onClick={onToggleSound}
+          disabled={!onToggleSound}
+          aria-pressed={isSoundEnabled}
+        >
+          <span className="toggle-switch-label">通知音效</span>
+          <span className="toggle-switch-track" aria-hidden="true">
+            <span className="toggle-switch-thumb" />
+          </span>
+        </button>
 
         <div className="notification-tabs" role="tablist" aria-label="通知分類">
           <button
@@ -108,12 +122,12 @@ function NotificationsModal({
                   {action && (
                     <button
                       type="button"
-                      className={action.canOpenChat ? 'small-icon-button' : 'text-button'}
+                      className="text-button"
                       onClick={() => onNotificationAction(notification)}
                       aria-label={action.label}
                       title={action.label}
                     >
-                      {action.canOpenChat ? <ChatIcon /> : action.hasAction ? '前往' : '已讀'}
+                      {action.hasAction ? '前往' : '已讀'}
                     </button>
                   )}
                 </article>

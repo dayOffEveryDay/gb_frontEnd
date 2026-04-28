@@ -52,6 +52,7 @@ function LineCallbackPage() {
         const nextUser = normalizeUser(data.user);
         setStoredAuth({
           token: data.token,
+          refreshToken: data.refreshToken,
           user: nextUser,
         });
         clearLineLoginParams();
@@ -61,6 +62,7 @@ function LineCallbackPage() {
             {
               type: LINE_LOGIN_SUCCESS_MESSAGE,
               token: data.token,
+              refreshToken: data.refreshToken,
               user: nextUser,
             },
             getFrontendBaseUrl()

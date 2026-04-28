@@ -33,7 +33,22 @@ export function BulbIcon() {
 export function RefreshIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.2 8.2A7 7 0 0 1 18 6.1V3.5l3.1 3.1-3.1 3.1V7.4A5.2 5.2 0 0 0 9.2 9ZM17.8 15.8A7 7 0 0 1 6 17.9v2.6l-3.1-3.1L6 14.3v2.3a5.2 5.2 0 0 0 8.8-1.6Z" />
+      <path
+        d="M19.1 11.2a7.3 7.3 0 1 1-2.18-5.2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.2"
+      />
+      <path
+        d="M19.15 4.25v4.9h-4.9"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.2"
+      />
     </svg>
   );
 }
@@ -42,6 +57,29 @@ export function ChatIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 4h14a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H9.8L5 20.8V17a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3Zm2.5 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm4.5 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm4.5 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z" />
+    </svg>
+  );
+}
+
+export function ChatRoomsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M4.5 5.5h10.25a3.5 3.5 0 0 1 3.5 3.5v2.35a3.5 3.5 0 0 1-3.5 3.5H9.3L4.5 18.3v-3.45A3.5 3.5 0 0 1 1 11.35V9a3.5 3.5 0 0 1 3.5-3.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M10.75 4.35A3.5 3.5 0 0 1 13.7 2.75h4.8A3.5 3.5 0 0 1 22 6.25v2.4a3.5 3.5 0 0 1-3.5 3.5v3.45l-2.15-1.55"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
     </svg>
   );
 }
@@ -58,6 +96,45 @@ export function ExpandIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 5h6v2H8.41l3.3 3.29-1.42 1.42L7 8.41V11H5V5Zm8 0h6v6h-2V8.41l-3.29 3.3-1.42-1.42L15.59 7H13V5ZM5 13h2v2.59l3.29-3.3 1.42 1.42L8.41 17H11v2H5v-6Zm12 0h2v6h-6v-2h2.59l-3.3-3.29 1.42-1.42 3.29 3.3V13Z" />
+    </svg>
+  );
+}
+
+export function DiagonalExpandIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M10.6 10.6 4 4m0 0h5.4M4 4v5.4M13.4 13.4 20 20m0 0h-5.4M20 20v-5.4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.6"
+      />
+    </svg>
+  );
+}
+
+export function CardViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1.6 2.4v11.2h10.8V6.4H6.6Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+export function CompactViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        d="M4 5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5Zm2 1v3h3V6H6Zm7-1a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V5Zm2 1v3h3V6h-3ZM4 14a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5Zm2 1v3h3v-3H6Zm7-1a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5Zm2 1v3h3v-3h-3Z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }

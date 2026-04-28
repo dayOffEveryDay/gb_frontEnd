@@ -131,6 +131,38 @@ export function resolveCampaignImageUrls(campaign) {
   return Array.from(new Set(normalized));
 }
 
+export function resolveCampaignImageRefs(campaign) {
+  const candidates =
+    Array.isArray(campaign?.imageRefs) && campaign.imageRefs.length > 0
+      ? campaign.imageRefs.filter(Boolean)
+      : [
+          ...(Array.isArray(campaign?.imageUrls) ? campaign.imageUrls : []),
+          ...(Array.isArray(campaign?.image_urls) ? campaign.image_urls : []),
+          ...(campaign?.itemImageUrl ? [campaign.itemImageUrl] : []),
+          ...(campaign?.item_image_url ? [campaign.item_image_url] : []),
+        ].filter(Boolean);
+
+  return Array.from(new Set(candidates));
+}
+
+export function getCampaignImageOrderName(value) {
+  const source = value == null ? '' : String(value);
+
+  if (!source || source.startsWith('data:')) {
+    return '';
+  }
+
+  try {
+    const path = source.startsWith('http://') || source.startsWith('https://') ? new URL(source).pathname : source;
+    const cleanPath = path.split(/[?#]/)[0];
+    const filename = cleanPath.split(/[\\/]/).filter(Boolean).pop() ?? '';
+    return decodeURIComponent(filename);
+  } catch {
+    const cleanPath = source.split(/[?#]/)[0];
+    return cleanPath.split(/[\\/]/).filter(Boolean).pop() ?? '';
+  }
+}
+
 export function getScenarioLabel(type) {
   if (type === 'INSTANT') {
     return LABELS.instant;
@@ -187,6 +219,7 @@ export function isViewableParticipantStatus(status) {
 
 export function mapCampaign(campaign, index) {
   const images = resolveCampaignImageUrls(campaign);
+  const imageRefs = resolveCampaignImageRefs(campaign);
   const fallbackImage = createFallbackImage(campaign.itemName ?? LABELS.noValue, 18 + index * 19);
   const myParticipantStatus = (
     campaign.myParticipantStatus ??
@@ -224,6 +257,7 @@ export function mapCampaign(campaign, index) {
       0,
     host: normalizeHost(campaign.host),
     imageUrls: images.length > 0 ? images : [fallbackImage],
+    imageRefs,
     image: images[0] ?? fallbackImage,
   };
 }

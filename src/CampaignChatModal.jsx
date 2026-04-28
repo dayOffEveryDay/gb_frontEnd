@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
-import { fetchCampaignChatMessages, getBackendBaseUrl } from './api';
+import { fetchCampaignChatMessages, getBackendBaseUrl, uploadChatImages } from './api';
+import ImageGalleryModal from './ImageGalleryModal';
 import { MoreIcon } from './Icons';
 
 const UNLOCK_COMMAND = '/解鎖修改';
 const COMPLETED_CHAT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const COMPLETED_CHAT_NOTICE = '團購已完成 聊天室將在3天後終止連線';
+const CHAT_IMAGE_URL_PATTERN = /(?:https?:\/\/[^\s]+|\/uploads\/[^\s]+|\buploads\/[^\s]+)/gi;
+const CHAT_IMAGE_EXTENSION_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
 
 function getCampaignStatus(campaign) {
   return (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? '').toString().toUpperCase();
@@ -68,8 +71,67 @@ function isPastChatExpiresAt(expiresAt) {
   return Date.now() >= expiresDate.getTime();
 }
 
+function isChatImageUrl(value) {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const path = value.startsWith('http://') || value.startsWith('https://') ? new URL(value).pathname : value;
+    return CHAT_IMAGE_EXTENSION_PATTERN.test(path);
+  } catch {
+    return CHAT_IMAGE_EXTENSION_PATTERN.test(value);
+  }
+}
+
+function resolveChatFileUrl(value) {
+  if (!value) {
+    return '';
+  }
+
+  if (
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('data:') ||
+    value.startsWith('blob:')
+  ) {
+    return value;
+  }
+
+  const normalizedPath = value.startsWith('/') ? value : `/${value}`;
+  return new URL(normalizedPath, `${getBackendBaseUrl()}/`).toString();
+}
+
+function normalizeChatImageUrls(values) {
+  const urls = Array.isArray(values) ? values : values ? [values] : [];
+  return Array.from(new Set(urls.filter(Boolean).filter(isChatImageUrl)));
+}
+
+function isImageFile(file) {
+  return file?.type?.startsWith('image/') || isChatImageUrl(file?.name ?? '');
+}
+
+function parseChatMessageContent(content, explicitImageUrls = []) {
+  const normalizedContent = content ?? '';
+  const matchedImageUrls = Array.from(normalizedContent.matchAll(CHAT_IMAGE_URL_PATTERN))
+    .map((match) => match[0].replace(/[),.;!?，。！？、]+$/u, ''))
+    .filter(isChatImageUrl);
+  const imageUrls = Array.from(new Set([...normalizeChatImageUrls(explicitImageUrls), ...matchedImageUrls]));
+  let text = normalizedContent;
+
+  imageUrls.forEach((url) => {
+    text = text.split(url).join('');
+  });
+
+  return {
+    text: text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(),
+    imageUrls,
+  };
+}
+
 function normalizeChatMessage(message) {
   return {
+    type: message.type ?? message.messageType ?? message.message_type ?? '',
     senderId: message.senderId ?? message.sender_id ?? null,
     senderName: message.senderName ?? message.sender_name ?? '未知使用者',
     avatarUrl:
@@ -79,6 +141,7 @@ function normalizeChatMessage(message) {
       message.profile_image_url ??
       '',
     content: message.content ?? '',
+    imageUrls: normalizeChatImageUrls(message.imageUrls ?? message.image_urls ?? message.urls),
     timestamp: message.timestamp ?? message.createdAt ?? message.created_at ?? '',
   };
 }
@@ -142,6 +205,7 @@ function CampaignChatModal({
   externalStatusEvent,
   isParticipantReviewCompleted = false,
   isHostReviewCompleted = false,
+  onMarkRead,
   onClose,
 }) {
   const [messages, setMessages] = useState(null);
@@ -155,10 +219,17 @@ function CampaignChatModal({
   const [isChatStopped, setIsChatStopped] = useState(false);
   const [hasConfirmedReceipt, setHasConfirmedReceipt] = useState(false);
   const [hasRaisedDispute, setHasRaisedDispute] = useState(false);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [imageGalleryState, setImageGalleryState] = useState({
+    isOpen: false,
+    images: [],
+    activeIndex: 0,
+  });
   const [isDisputeDialogOpen, setIsDisputeDialogOpen] = useState(false);
   const [disputeReasonDraft, setDisputeReasonDraft] = useState('');
   const clientRef = useRef(null);
   const bodyRef = useRef(null);
+  const fileInputRef = useRef(null);
   const lastExternalStatusEventIdRef = useRef('');
 
   const campaignId = campaign?.id;
@@ -200,15 +271,24 @@ function CampaignChatModal({
   const canReviewAsHost = isHost && ['DELIVERED', 'CONFIRMED', 'COMPLETED'].includes(campaignStatus);
 
   useEffect(() => {
+    if (!campaignId) {
+      return;
+    }
+
     setHasConfirmedReceipt(false);
     setHasRaisedDispute(false);
     setError('');
     setStatusMessage('');
     setDraft('');
+    setIsUploadingImages(false);
+    setImageGalleryState({
+      isOpen: false,
+      images: [],
+      activeIndex: 0,
+    });
     setIsDisputeDialogOpen(false);
     setDisputeReasonDraft('');
-    setIsChatStopped(shouldStopChat);
-  }, [campaignCompletedAt, campaignChatExpiresAt, campaignId, campaignStatus, isOpen, shouldStopChat]);
+  }, [campaignId, isOpen]);
 
   useEffect(() => {
     setIsChatStopped(shouldStopChat);
@@ -224,7 +304,15 @@ function CampaignChatModal({
     fetchCampaignChatMessages(campaignId, token)
       .then((data) => {
         if (!cancelled) {
-          setMessages(Array.isArray(data) ? data.map(normalizeChatMessage) : []);
+          const normalizedMessages = Array.isArray(data) ? data.map(normalizeChatMessage) : [];
+          setMessages(normalizedMessages);
+
+          const latestMessage = normalizedMessages[normalizedMessages.length - 1];
+          if (latestMessage?.timestamp) {
+            onMarkRead?.(campaignId, latestMessage.timestamp);
+          } else {
+            onMarkRead?.(campaignId);
+          }
         }
       })
       .catch((nextError) => {
@@ -243,7 +331,7 @@ function CampaignChatModal({
     return () => {
       cancelled = true;
     };
-  }, [campaignId, isOpen, shouldStopChat, token]);
+  }, [campaignId, isOpen, onMarkRead, shouldStopChat, token]);
 
   useEffect(() => {
     if (!isOpen || !campaignId || !token) {
@@ -302,6 +390,7 @@ function CampaignChatModal({
 
                 const nextMessage = normalizeChatMessage(payload);
                 setMessages((current) => [...(current ?? []), nextMessage]);
+                onMarkRead?.(campaignId, nextMessage.timestamp);
               } catch {
                 setError('聊天室訊息格式錯誤');
               }
@@ -336,7 +425,7 @@ function CampaignChatModal({
       clientRef.current?.deactivate();
       clientRef.current = null;
     };
-  }, [campaignId, campaignStatus, isOpen, onCampaignStatusChange, shouldStopChat, token, wsUrl]);
+  }, [campaignId, campaignStatus, isOpen, onCampaignStatusChange, onMarkRead, shouldStopChat, token, wsUrl]);
 
   useEffect(() => {
     if (bodyRef.current) {
@@ -448,8 +537,25 @@ function CampaignChatModal({
     }
   };
 
+  const publishChatContent = (content) => {
+    if (!clientRef.current?.connected) {
+      setError('聊天室尚未連線，請稍後再試');
+      return false;
+    }
+
+    clientRef.current.publish({
+      destination: `/app/chat/${campaignId}/sendMessage`,
+      body: JSON.stringify({ content }),
+    });
+
+    setDraft('');
+    setError('');
+    setStatusMessage('');
+    return true;
+  };
+
   const handleSend = async () => {
-    if (isChatStopped) {
+    if (isChatStopped || isUploadingImages) {
       return;
     }
 
@@ -476,19 +582,88 @@ function CampaignChatModal({
       return;
     }
 
+    publishChatContent(content);
+  };
+
+  const handlePickImages = () => {
+    if (isChatStopped || isUploadingImages) {
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const handleUploadImages = async (event) => {
+    const selectedFiles = Array.from(event.target.files ?? []).filter(isImageFile);
+    event.target.value = '';
+
+    if (isChatStopped || isUploadingImages || selectedFiles.length === 0) {
+      return;
+    }
+
     if (!clientRef.current?.connected) {
       setError('聊天室尚未連線，請稍後再試');
       return;
     }
 
-    clientRef.current.publish({
-      destination: `/app/chat/${campaignId}/sendMessage`,
-      body: JSON.stringify({ content }),
-    });
-
-    setDraft('');
+    setIsUploadingImages(true);
     setError('');
     setStatusMessage('');
+
+    try {
+      const result = await uploadChatImages(selectedFiles, token, campaignId);
+      const urls = Array.isArray(result?.urls) ? result.urls.filter(Boolean) : [];
+
+      if (urls.length === 0) {
+        setError('沒有可送出的圖片');
+        return;
+      }
+
+      const content = [draft.trim(), ...urls].filter(Boolean).join('\n');
+      publishChatContent(content);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '圖片上傳失敗');
+    } finally {
+      setIsUploadingImages(false);
+    }
+  };
+
+  const handleOpenImageGallery = (images, startIndex) => {
+    setImageGalleryState({
+      isOpen: true,
+      images,
+      activeIndex: startIndex,
+    });
+  };
+
+  const handleCloseImageGallery = () => {
+    setImageGalleryState((current) => ({
+      ...current,
+      isOpen: false,
+    }));
+  };
+
+  const handleSelectGalleryImage = (nextIndex) => {
+    setImageGalleryState((current) => ({
+      ...current,
+      activeIndex: nextIndex,
+    }));
+  };
+
+  const handleStepImageGallery = (direction) => {
+    setImageGalleryState((current) => {
+      if (!current.images.length) {
+        return current;
+      }
+
+      const step = direction === 'next' ? 1 : -1;
+      const nextIndex = (current.activeIndex + step + current.images.length) % current.images.length;
+
+      return {
+        ...current,
+        activeIndex: nextIndex,
+      };
+    });
   };
 
   return (
@@ -521,7 +696,7 @@ function CampaignChatModal({
             {canDeliverCampaign ? (
               <button
                 type="button"
-                className="chat-status-action"
+                className="chat-status-action deliver-status-action"
                 onClick={handleDeliver}
                 disabled={isDeliveringCampaign}
               >
@@ -556,8 +731,6 @@ function CampaignChatModal({
             ) : showConfirmedBadge ? (
               <span className="chat-status-pill">已確認收到</span>
             ) : null}
-
-            <span className="chat-status-pill">{`面交地點：${campaign.meetupLocation || '討論'}`}</span>
 
             {canReviewAsParticipant && campaign?.host?.id != null && (
               <button
@@ -613,6 +786,8 @@ function CampaignChatModal({
             const isMine = message.senderId != null && Number(message.senderId) === Number(currentUser?.id);
             const avatarUrl = resolveMessageAvatar(message, campaign, currentUser, isMine);
             const avatarLabel = getChatAvatarLabel(message.senderName, isMine);
+            const parsedContent = parseChatMessageContent(message.content, message.imageUrls);
+            const resolvedImageUrls = parsedContent.imageUrls.map(resolveChatFileUrl);
 
             if (isSystemMessage) {
               return (
@@ -654,7 +829,41 @@ function CampaignChatModal({
                     <strong>{isMine ? '我' : message.senderName}</strong>
                     <time>{formatMessageTime(message.timestamp)}</time>
                   </header>
-                  <p>{message.content}</p>
+                  {parsedContent.text && <p>{parsedContent.text}</p>}
+                  {resolvedImageUrls.length > 0 && (
+                    resolvedImageUrls.length > 2 ? (
+                      <button
+                        type="button"
+                        className="chat-image-stack"
+                        onClick={() => handleOpenImageGallery(resolvedImageUrls, 0)}
+                        aria-label={`放大 ${resolvedImageUrls.length} 張聊天室圖片`}
+                      >
+                        {resolvedImageUrls.slice(0, 3).map((imageUrl, stackIndex) => (
+                          <span
+                            key={`${imageUrl}-${stackIndex}`}
+                            className={`chat-image-stack-layer layer-${stackIndex}`}
+                          >
+                            <img src={imageUrl} alt="" loading="lazy" />
+                          </span>
+                        ))}
+                        <span className="chat-image-stack-count">{resolvedImageUrls.length} 張</span>
+                      </button>
+                    ) : (
+                      <div className={resolvedImageUrls.length > 1 ? 'chat-image-grid many' : 'chat-image-grid single'}>
+                        {resolvedImageUrls.map((imageUrl, imageIndex) => (
+                        <button
+                          key={`${imageUrl}-${imageIndex}`}
+                          type="button"
+                          className="chat-image-thumb"
+                          onClick={() => handleOpenImageGallery(resolvedImageUrls, imageIndex)}
+                          aria-label={`放大聊天室圖片 ${imageIndex + 1}`}
+                        >
+                          <img src={imageUrl} alt="" loading="lazy" />
+                        </button>
+                        ))}
+                      </div>
+                    )
+                  )}
                 </div>
               </article>
             );
@@ -666,10 +875,27 @@ function CampaignChatModal({
 
         <div className="chat-composer">
           <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="chat-file-input"
+            disabled={isChatStopped || isUploadingImages}
+            onChange={handleUploadImages}
+          />
+          <button
+            type="button"
+            className="chat-attachment-button"
+            onClick={handlePickImages}
+            disabled={isChatStopped || isUploadingImages}
+          >
+            {isUploadingImages ? '上傳中' : '圖片'}
+          </button>
+          <input
             type="text"
             value={draft}
             placeholder={isChatStopped ? '聊天室已停止連線' : '輸入訊息'}
-            disabled={isChatStopped}
+            disabled={isChatStopped || isUploadingImages}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -678,10 +904,21 @@ function CampaignChatModal({
               }
             }}
           />
-          <button type="button" className="text-button" onClick={handleSend} disabled={isChatStopped}>
+          <button type="button" className="text-button" onClick={handleSend} disabled={isChatStopped || isUploadingImages}>
             送出
           </button>
         </div>
+
+        <ImageGalleryModal
+          isOpen={imageGalleryState.isOpen}
+          title="聊天室圖片"
+          images={imageGalleryState.images}
+          activeIndex={imageGalleryState.activeIndex}
+          onClose={handleCloseImageGallery}
+          onPrev={() => handleStepImageGallery('prev')}
+          onNext={() => handleStepImageGallery('next')}
+          onSelect={handleSelectGalleryImage}
+        />
 
         {isDisputeDialogOpen && (
           <div className="chat-dialog-backdrop" onClick={() => !isRaisingDispute && setIsDisputeDialogOpen(false)}>

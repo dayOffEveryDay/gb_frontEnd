@@ -3,6 +3,7 @@ import { Client } from '@stomp/stompjs';
 import { useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
 import {
+  AUTH_STORAGE_EVENT,
   cancelCampaign,
   checkReviewStatus,
   confirmCampaignReceipt,
@@ -11,6 +12,7 @@ import {
   deliverCampaign,
   devLogin,
   fetchCampaigns,
+  fetchCampaignChatMessages,
   fetchCategories,
   fetchHostDashboard,
   fetchMyHostedCampaigns,
@@ -34,6 +36,7 @@ import {
   reviseCampaign,
   setStoredAuth,
   unlockCampaignRevision,
+  updateCampaignImageOrder,
   withdrawCampaign,
   updateCurrentUserProfile,
 } from './api';
@@ -41,6 +44,7 @@ import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeCo
 import {
   formatCountdown,
   formatDateTime,
+  getCampaignImageOrderName,
   getSuggestedMeetupTime,
   getInitialCampaignForm,
   getScenarioLabel,
@@ -56,6 +60,7 @@ import {
 import HomeTopBar from './HomeTopBar';
 import LoginModal from './LoginModal';
 import ProfileModal from './ProfileModal';
+import ChatRoomsModal from './ChatRoomsModal';
 import NotificationsModal from './NotificationsModal';
 import CreateCampaignModal from './CreateCampaignModal';
 import CreateCampaignSuccessModal from './CreateCampaignSuccessModal';
@@ -65,7 +70,390 @@ import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
-import { SearchIcon } from './Icons';
+import { AvatarIcon, CardViewIcon, CompactViewIcon, DiagonalExpandIcon, SearchIcon } from './Icons';
+
+const MINE_CAMPAIGN_BUCKET_LABELS = {
+  ACTIVE: '進行中',
+  COMPLETED: '已完成',
+  FAILED: '失敗',
+  ISSUE: '異常',
+  CANCELLED: '已取消',
+};
+
+const MARKET_STATUS_OPTIONS = [
+  { value: 'ALL', label: '全部' },
+  { value: 'OPEN', label: '可跟' },
+];
+
+const DEAL_VIEW_MODE_KEYS = {
+  market: 'deal_view_mode_market',
+  mine: 'deal_view_mode_mine',
+  mobile: 'deal_view_mode_mobile',
+};
+const MARKET_HIDE_FULL_KEY = 'market_hide_full';
+const NOTIFICATION_SOUND_ENABLED_KEY = 'notification_sound_enabled';
+const CHAT_ROOM_PAGE_SIZE = 100;
+const COMPLETED_CHAT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const CHAT_ROOM_LAST_READ_KEY_PREFIX = 'chat_room_last_read';
+
+function getChatRoomLastReadStorageKey(userId) {
+  return `${CHAT_ROOM_LAST_READ_KEY_PREFIX}:${userId ?? 'guest'}`;
+}
+
+function getStoredChatRoomLastReads(userId) {
+  if (!userId) {
+    return {};
+  }
+
+  const storageKey = getChatRoomLastReadStorageKey(userId);
+  const raw = localStorage.getItem(storageKey);
+
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    localStorage.removeItem(storageKey);
+    return {};
+  }
+}
+
+function setStoredChatRoomLastReads(userId, nextState) {
+  if (!userId) {
+    return;
+  }
+
+  const storageKey = getChatRoomLastReadStorageKey(userId);
+  const normalizedEntries = Object.entries(nextState ?? {}).filter(([, value]) => typeof value === 'string' && value);
+
+  if (normalizedEntries.length === 0) {
+    localStorage.removeItem(storageKey);
+    return;
+  }
+
+  localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(normalizedEntries)));
+}
+
+function getChatMessageTimestampValue(message) {
+  return message?.timestamp ?? message?.createdAt ?? message?.created_at ?? '';
+}
+
+function getComparableTime(value) {
+  const date = parseLocalDateTime(value);
+  return date ? date.getTime() : 0;
+}
+
+function normalizeReadTimestamp(currentValue, nextValue) {
+  const currentTime = getComparableTime(currentValue);
+  const nextTime = getComparableTime(nextValue) || Date.now();
+  return nextTime >= currentTime ? new Date(nextTime).toISOString() : currentValue;
+}
+
+function countUnreadChatMessages(messages, currentUserId, lastReadAt = '') {
+  const lastReadTime = getComparableTime(lastReadAt);
+
+  return (Array.isArray(messages) ? messages : []).reduce((count, message) => {
+    const messageType = (message?.type ?? message?.messageType ?? message?.message_type ?? '')
+      .toString()
+      .toUpperCase();
+
+    if (messageType === 'SYSTEM') {
+      return count;
+    }
+
+    if (isSameUserId(message?.senderId ?? message?.sender_id, currentUserId)) {
+      return count;
+    }
+
+    const messageTime = getComparableTime(getChatMessageTimestampValue(message));
+    if (!messageTime) {
+      return lastReadTime === 0 ? count + 1 : count;
+    }
+
+    return messageTime > lastReadTime ? count + 1 : count;
+  }, 0);
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  let nextIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    })
+  );
+
+  return results;
+}
+
+function getInitialMarketHideFullEnabled() {
+  return localStorage.getItem(MARKET_HIDE_FULL_KEY) === 'true';
+}
+
+function getInitialNotificationSoundEnabled() {
+  return localStorage.getItem(NOTIFICATION_SOUND_ENABLED_KEY) !== 'false';
+}
+
+function getStoredDealViewModePreference(scope) {
+  const savedMode = localStorage.getItem(DEAL_VIEW_MODE_KEYS[scope]);
+  return savedMode === 'card' || savedMode === 'compact' ? savedMode : '';
+}
+
+function getInitialDealViewModePreferences() {
+  return {
+    market: getStoredDealViewModePreference('market'),
+    mine: getStoredDealViewModePreference('mine'),
+    mobile: getStoredDealViewModePreference('mobile'),
+  };
+}
+
+function getAudioContextConstructor() {
+  return window.AudioContext ?? window.webkitAudioContext ?? null;
+}
+
+function getNotificationAudioContext(audioContextRef) {
+  const AudioContextConstructor = getAudioContextConstructor();
+
+  if (!AudioContextConstructor) {
+    return null;
+  }
+
+  if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+    audioContextRef.current = new AudioContextConstructor();
+  }
+
+  return audioContextRef.current;
+}
+
+async function unlockNotificationAudio(audioContextRef) {
+  const audioContext = getNotificationAudioContext(audioContextRef);
+
+  if (!audioContext || audioContext.state !== 'suspended') {
+    return;
+  }
+
+  try {
+    await audioContext.resume();
+  } catch {
+    // Browser audio policies can block unlock until a direct user gesture.
+  }
+}
+
+async function playNotificationSound(audioContextRef) {
+  const audioContext = getNotificationAudioContext(audioContextRef);
+
+  if (!audioContext) {
+    return;
+  }
+
+  if (audioContext.state === 'suspended') {
+    await unlockNotificationAudio(audioContextRef);
+  }
+
+  if (audioContext.state !== 'running') {
+    return;
+  }
+
+  const startAt = audioContext.currentTime;
+  const gain = audioContext.createGain();
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.34);
+  gain.connect(audioContext.destination);
+
+  [660, 880].forEach((frequency, index) => {
+    const oscillator = audioContext.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, startAt);
+    oscillator.connect(gain);
+    oscillator.start(startAt + index * 0.11);
+    oscillator.stop(startAt + 0.18 + index * 0.11);
+  });
+}
+
+function getDealViewKey(deal, index = 0) {
+  return String(
+    deal?.id ??
+      deal?.campaignId ??
+      `${deal?.mineSource ?? 'campaign'}-${deal?.itemName ?? 'item'}-${deal?.expireTime ?? index}`
+  );
+}
+
+function areUsersEquivalent(left, right) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left && !right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    String(left.id ?? '') === String(right.id ?? '') &&
+    (left.displayName ?? '') === (right.displayName ?? '') &&
+    (left.profileImageUrl ?? '') === (right.profileImageUrl ?? '') &&
+    Boolean(left.hasCostcoMembership) === Boolean(right.hasCostcoMembership)
+  );
+}
+
+function CompactDealRow({
+  deal,
+  index,
+  labels,
+  countdownNow,
+  formatCountdown,
+  formatDateTime,
+  getScenarioLabel,
+  getTypeClass,
+  isHighlighted,
+  onExpand,
+  onOpenGallery,
+  onOpenUserProfile,
+}) {
+  const viewKey = getDealViewKey(deal, index);
+  const hostName = deal.host?.displayName ?? labels.noValue;
+  const deadlineValue = deal.expireTime ?? deal.meetupTime;
+
+  return (
+    <article className={isHighlighted ? 'compact-market-row compact-market-row-highlighted' : 'compact-market-row'}>
+      <button
+        type="button"
+        className="compact-market-image-button"
+        onClick={() => onOpenGallery?.(deal, 0)}
+        aria-label={`查看 ${deal.itemName} 圖片`}
+      >
+        <img src={deal.image} alt={deal.itemName} className="compact-market-image" />
+      </button>
+
+      <div className="compact-market-main">
+        <div className="compact-market-title-row">
+          <strong className="compact-market-title">{deal.itemName}</strong>
+          <span className={`compact-market-type ${getTypeClass(deal.scenarioType)}`}>
+            {getScenarioLabel(deal.scenarioType)}
+          </span>
+        </div>
+        <div className="compact-market-meta">
+          <span>NT$ {deal.pricePerUnit}</span>
+          <span>剩 {deal.availableQuantity} 件</span>
+          <span>{deal.storeName || labels.noValue}</span>
+        </div>
+        <div className="compact-market-bottom">
+          <button
+            type="button"
+            className="compact-market-host"
+            onClick={() =>
+              onOpenUserProfile?.({
+                id: deal.host?.id,
+                displayName: deal.host?.displayName,
+                profileImageUrl: deal.host?.profileImageUrl,
+                creditScore: deal.host?.creditScore,
+              })
+            }
+            disabled={!deal.host?.id || !onOpenUserProfile}
+            aria-label={`查看 ${hostName} 的個人資料`}
+            title="查看個人資料"
+          >
+            <span className="compact-host-avatar">
+              {deal.host?.profileImageUrl ? (
+                <img src={deal.host.profileImageUrl} alt="" className="avatar-image" />
+              ) : (
+                <AvatarIcon />
+              )}
+            </span>
+            <span>{hostName}</span>
+          </button>
+          <span className="compact-market-deadline">
+            <span className="compact-market-countdown">{formatCountdown(deadlineValue, countdownNow)}</span>
+            <span>{formatDateTime(deadlineValue)}</span>
+          </span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="compact-expand-button"
+        onClick={() => onExpand(viewKey)}
+        aria-label={`放大 ${deal.itemName} 團購卡片`}
+        title="放大"
+      >
+        <DiagonalExpandIcon />
+      </button>
+    </article>
+  );
+}
+
+function CompactMineDealRow({ deal, index, labels, isHighlighted, onExpand, onOpenGallery, onOpenUserProfile }) {
+  const statusBucket = getMineCampaignBucket(deal);
+  const statusLabel = MINE_CAMPAIGN_BUCKET_LABELS[statusBucket] ?? statusBucket;
+  const viewKey = getDealViewKey(deal, index);
+  const hostName = deal.host?.displayName ?? labels.noValue;
+
+  return (
+    <article className={isHighlighted ? 'compact-deal-row compact-deal-row-highlighted' : 'compact-deal-row'}>
+      <button
+        type="button"
+        className="compact-deal-image-button"
+        onClick={() => onOpenGallery?.(deal, 0)}
+        aria-label={`查看 ${deal.itemName} 圖片`}
+      >
+        <img src={deal.image} alt={deal.itemName} className="compact-deal-image" />
+      </button>
+
+      <div className="compact-deal-main">
+        <strong className="compact-deal-title">{deal.itemName}</strong>
+        <div className="compact-deal-host">
+          <button
+            type="button"
+            className="compact-host-avatar"
+            onClick={() =>
+              onOpenUserProfile?.({
+                id: deal.host?.id,
+                displayName: deal.host?.displayName,
+                profileImageUrl: deal.host?.profileImageUrl,
+                creditScore: deal.host?.creditScore,
+              })
+            }
+            disabled={!deal.host?.id || !onOpenUserProfile}
+            aria-label={`查看 ${hostName} 的個人資料`}
+            title="查看個人資料"
+          >
+            {deal.host?.profileImageUrl ? (
+              <img src={deal.host.profileImageUrl} alt="" className="avatar-image" />
+            ) : (
+              <AvatarIcon />
+            )}
+          </button>
+          <span>{hostName}</span>
+        </div>
+      </div>
+
+      <span className={`compact-deal-status ${statusBucket.toLowerCase()}`}>{statusLabel}</span>
+
+      <button
+        type="button"
+        className="compact-expand-button"
+        onClick={() => onExpand(viewKey)}
+        aria-label={`放大 ${deal.itemName} 團購卡片`}
+        title="放大"
+      >
+        <DiagonalExpandIcon />
+      </button>
+    </article>
+  );
+}
 
 function getCampaignLifecycle(rawCampaign) {
   const statusSource = [
@@ -195,6 +583,31 @@ function normalizeNotification(notification) {
     content: notification.content ?? '',
     createdAt: notification.createdAt ?? notification.created_at ?? '',
   };
+}
+
+function getLiveNotificationKey(notification) {
+  return String(
+    notification?.id ??
+      `${notification?.type ?? 'NOTICE'}-${notification?.referenceId ?? 'none'}-${notification?.createdAt ?? ''}-${notification?.content ?? ''}`
+  );
+}
+
+function getLiveNotificationTone(notification) {
+  const type = (notification?.type ?? '').toString().toUpperCase();
+
+  if (type.includes('CANCEL') || type.includes('KICK') || type.includes('FAIL') || type.includes('NO_SHOW') || type.includes('DISPUT')) {
+    return 'danger';
+  }
+
+  if (type.includes('COMPLETE') || type.includes('CONFIRM')) {
+    return 'success';
+  }
+
+  if (type.includes('FULL') || type.includes('DELIVER')) {
+    return 'primary';
+  }
+
+  return 'neutral';
 }
 
 function normalizeHostParticipant(participant, index = 0) {
@@ -331,12 +744,187 @@ function canOpenCampaignChat(campaign) {
   return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
 }
 
+function canDisplayMarketCampaign(campaign, activeType, hideFull = false) {
+  if (campaign?.scenarioType !== activeType) {
+    return false;
+  }
+
+  const statusSource = getCampaignStatusValue(campaign);
+  const isFull = statusSource.includes('FULL') || Number(campaign?.availableQuantity) <= 0;
+
+  if (hideFull && isFull) {
+    return false;
+  }
+
+  if (!statusSource) {
+    return Number.isFinite(Number(campaign?.availableQuantity));
+  }
+
+  return ['OPEN', 'FULL'].some((status) => statusSource.includes(status));
+}
+
+function getCampaignStatusValue(campaign) {
+  return (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? campaign?.state ?? '')
+    .toString()
+    .toUpperCase();
+}
+
+function getCampaignCompletedAtValue(campaign) {
+  return campaign?.completedAt ?? campaign?.completed_at ?? campaign?.completedTime ?? campaign?.completed_time ?? '';
+}
+
+function getCampaignChatExpiresAtValue(campaign) {
+  return (
+    campaign?.chatExpiresAt ??
+    campaign?.chat_expires_at ??
+    campaign?.chatExpiredAt ??
+    campaign?.chat_expired_at ??
+    campaign?.chatEndAt ??
+    campaign?.chat_end_at ??
+    ''
+  );
+}
+
+function getCampaignEstablishedAtValue(campaign) {
+  return (
+    campaign?.establishedAt ??
+    campaign?.established_at ??
+    campaign?.formedAt ??
+    campaign?.formed_at ??
+    campaign?.fullAt ??
+    campaign?.full_at ??
+    campaign?.campaignFullAt ??
+    campaign?.campaign_full_at ??
+    campaign?.chatCreatedAt ??
+    campaign?.chat_created_at ??
+    campaign?.chatOpenedAt ??
+    campaign?.chat_opened_at ??
+    ''
+  );
+}
+
+function hasClosedChatFlag(campaign) {
+  const stopped = campaign?.chatStopped ?? campaign?.chat_stopped ?? campaign?.chatClosed ?? campaign?.chat_closed;
+  if (stopped === true) {
+    return true;
+  }
+
+  const available =
+    campaign?.chatAvailable ?? campaign?.chat_available ?? campaign?.chatEnabled ?? campaign?.chat_enabled ?? campaign?.canChat;
+  return available === false;
+}
+
+function isPastDateTime(value) {
+  const date = parseLocalDateTime(value);
+  return Boolean(date && date.getTime() <= Date.now());
+}
+
+function isCampaignCompletedChatExpired(campaign) {
+  if (getCampaignStatusValue(campaign) !== 'COMPLETED') {
+    return false;
+  }
+
+  const completedDate = parseLocalDateTime(getCampaignCompletedAtValue(campaign));
+  if (!completedDate) {
+    return false;
+  }
+
+  return Date.now() >= completedDate.getTime() + COMPLETED_CHAT_RETENTION_MS;
+}
+
+function isCampaignChatClosed(campaign) {
+  return (
+    hasClosedChatFlag(campaign) ||
+    isPastDateTime(getCampaignChatExpiresAtValue(campaign)) ||
+    isCampaignCompletedChatExpired(campaign)
+  );
+}
+
+function canListCampaignChatRoom(campaign) {
+  return canOpenCampaignChat(campaign) && !isCampaignChatClosed(campaign);
+}
+
+function getChatRoomSortTime(campaign) {
+  const date = parseLocalDateTime(
+    getCampaignEstablishedAtValue(campaign) ||
+      getCampaignChatExpiresAtValue(campaign) ||
+      getCampaignCompletedAtValue(campaign) ||
+      campaign?.meetupTime ||
+      campaign?.meetup_time ||
+      campaign?.expireTime ||
+      campaign?.expire_time
+  );
+
+  return date ? date.getTime() : 0;
+}
+
+function buildOpenChatRooms(hostedData, joinedData) {
+  return buildMineCampaigns(hostedData, joinedData, 'ALL', 'ALL')
+    .filter(canListCampaignChatRoom)
+    .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
+}
+
 function isSameUserId(firstUserId, secondUserId) {
   if (firstUserId == null || secondUserId == null) {
     return false;
   }
 
   return Number(firstUserId) === Number(secondUserId);
+}
+
+function isCampaignHostForUser(campaign, currentUser) {
+  const source = (campaign?.mineSource ?? campaign?.__mineSource ?? '').toString().toUpperCase();
+
+  return (
+    campaign?.managementMode === 'HOST' ||
+    source === 'HOSTED' ||
+    Boolean(campaign?.isHost) ||
+    isSameUserId(campaign?.host?.id, currentUser?.id)
+  );
+}
+
+function areStringArraysEqual(first = [], second = []) {
+  return first.length === second.length && first.every((item, index) => item === second[index]);
+}
+
+function reorderList(items, fromIndex, toIndex) {
+  if (
+    !Array.isArray(items) ||
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= items.length ||
+    toIndex >= items.length
+  ) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+function getCampaignImageOrderNames(campaign, images) {
+  const imageRefs =
+    Array.isArray(campaign?.imageRefs) && campaign.imageRefs.length === images.length
+      ? campaign.imageRefs
+      : images;
+
+  return imageRefs.map(getCampaignImageOrderName);
+}
+
+function canReorderCampaignImages(campaign, currentUser) {
+  const images = Array.isArray(campaign?.imageUrls) ? campaign.imageUrls : [];
+  const orderNames = getCampaignImageOrderNames(campaign, images);
+
+  return (
+    isCampaignHostForUser(campaign, currentUser) &&
+    getMineCampaignBucket(campaign) === 'ACTIVE' &&
+    images.length > 1 &&
+    orderNames.length === images.length &&
+    orderNames.every(Boolean)
+  );
 }
 
 function isFullCampaignNotification(notification) {
@@ -402,6 +990,8 @@ function HomePage() {
   const [isReferenceLoading, setIsReferenceLoading] = useState(true);
   const [activeType, setActiveType] = useState('INSTANT');
   const [activeCategory, setActiveCategory] = useState(0);
+  const [hideFullCampaigns, setHideFullCampaigns] = useState(getInitialMarketHideFullEnabled);
+  const [activeMarketStatus, setActiveMarketStatus] = useState('ALL');
   const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
   const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
   const [activeStore, setActiveStore] = useState(0);
@@ -417,13 +1007,19 @@ function HomePage() {
   const [user, setUser] = useState(() => normalizeUser(getStoredUser()));
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isChatRoomsOpen, setIsChatRoomsOpen] = useState(false);
+  const [chatRooms, setChatRooms] = useState([]);
+  const [chatRoomsError, setChatRoomsError] = useState('');
+  const [isChatRoomsLoading, setIsChatRoomsLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [readNotifications, setReadNotifications] = useState([]);
   const [notificationsError, setNotificationsError] = useState('');
   const [readNotificationsError, setReadNotificationsError] = useState('');
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
   const [isReadNotificationsLoading, setIsReadNotificationsLoading] = useState(false);
-  const [liveNotification, setLiveNotification] = useState(null);
+  const [liveNotifications, setLiveNotifications] = useState([]);
+  const [isNotificationSoundEnabled, setIsNotificationSoundEnabled] = useState(getInitialNotificationSoundEnabled);
+  const [successToast, setSuccessToast] = useState(null);
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -458,12 +1054,49 @@ function HomePage() {
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
     title: '',
+    campaignId: null,
     images: [],
+    imageOrderNames: [],
+    originalImageOrderNames: [],
     activeIndex: 0,
+    canReorder: false,
+    hasOrderChanges: false,
+    isSavingOrder: false,
+    orderMessage: '',
+    orderError: '',
   });
+  useEffect(() => {
+    const syncAuthState = () => {
+      const nextToken = getStoredToken();
+      const nextUser = normalizeUser(getStoredUser());
+
+      setToken((current) => (current === nextToken ? current : nextToken));
+      setUser((current) => (areUsersEquivalent(current, nextUser) ? current : nextUser));
+    };
+
+    const handleStorageChange = (event) => {
+      if (event.key && !['jwt_token', 'refresh_token', 'current_user'].includes(event.key)) {
+        return;
+      }
+
+      syncAuthState();
+    };
+
+    window.addEventListener(AUTH_STORAGE_EVENT, syncAuthState);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener(AUTH_STORAGE_EVENT, syncAuthState);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
   const [referenceRefreshKey, setReferenceRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [focusedCampaignId, setFocusedCampaignId] = useState('');
+  const [dealViewModePreferences, setDealViewModePreferences] = useState(getInitialDealViewModePreferences);
+  const [expandedCompactDealId, setExpandedCompactDealId] = useState('');
+  const [isDealViewControlVisible, setIsDealViewControlVisible] = useState(true);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.matchMedia('(min-width: 700px)').matches);
   const [pageTransitionDirection, setPageTransitionDirection] = useState('forward');
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
@@ -487,12 +1120,60 @@ function HomePage() {
   const gestureLockRef = useRef('');
   const searchInputRef = useRef(null);
   const notificationClientRef = useRef(null);
-  const liveNotificationTimerRef = useRef(null);
+  const liveNotificationTimersRef = useRef(new Map());
+  const successToastTimerRef = useRef(null);
+  const dealViewControlTimerRef = useRef(null);
+  const notificationAudioContextRef = useRef(null);
+  const notificationSoundEnabledRef = useRef(isNotificationSoundEnabled);
   const lastHandledChatNotificationRef = useRef('');
   const pendingProfileReturnRef = useRef(null);
   const profileRestoreAppliedRef = useRef(false);
   const campaignsSignatureRef = useRef('[]');
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
+  const chatUnreadRoomCount = useMemo(
+    () => chatRooms.reduce((count, room) => count + (Number(room?.unreadMessageCount ?? 0) > 0 ? 1 : 0), 0),
+    [chatRooms]
+  );
+
+  const dismissLiveNotification = useCallback((notificationKey) => {
+    const timerId = liveNotificationTimersRef.current.get(notificationKey);
+    if (timerId) {
+      window.clearTimeout(timerId);
+      liveNotificationTimersRef.current.delete(notificationKey);
+    }
+
+    setLiveNotifications((current) => current.filter((notification) => notification.toastKey !== notificationKey));
+  }, []);
+
+  const pushLiveNotification = useCallback(
+    (notification) => {
+      if (!notification) {
+        return;
+      }
+
+      const toastKey = getLiveNotificationKey(notification);
+      setLiveNotifications((current) => [
+        {
+          ...notification,
+          toastKey,
+        },
+        ...current.filter((item) => item.toastKey !== toastKey),
+      ]);
+
+      const existingTimerId = liveNotificationTimersRef.current.get(toastKey);
+      if (existingTimerId) {
+        window.clearTimeout(existingTimerId);
+      }
+
+      const nextTimerId = window.setTimeout(() => {
+        liveNotificationTimersRef.current.delete(toastKey);
+        setLiveNotifications((current) => current.filter((item) => item.toastKey !== toastKey));
+      }, 5000);
+
+      liveNotificationTimersRef.current.set(toastKey, nextTimerId);
+    },
+    []
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -500,16 +1181,93 @@ function HomePage() {
   }, [themeMode]);
 
   useEffect(() => {
+    localStorage.setItem(MARKET_HIDE_FULL_KEY, String(hideFullCampaigns));
+  }, [hideFullCampaigns]);
+
+  useEffect(() => {
+    notificationSoundEnabledRef.current = isNotificationSoundEnabled;
+  }, [isNotificationSoundEnabled]);
+
+  useEffect(() => {
     campaignsSignatureRef.current = getCampaignListSignature(campaigns);
   }, [campaigns]);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 700px)');
+    const syncDesktopViewport = () => setIsDesktopViewport(mediaQuery.matches);
+
+    syncDesktopViewport();
+    mediaQuery.addEventListener('change', syncDesktopViewport);
+
+    return () => mediaQuery.removeEventListener('change', syncDesktopViewport);
+  }, []);
+
+  useEffect(() => {
     return () => {
-      if (liveNotificationTimerRef.current) {
-        window.clearTimeout(liveNotificationTimerRef.current);
+      liveNotificationTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      liveNotificationTimersRef.current.clear();
+      if (successToastTimerRef.current) {
+        window.clearTimeout(successToastTimerRef.current);
+      }
+      if (dealViewControlTimerRef.current) {
+        window.clearTimeout(dealViewControlTimerRef.current);
+      }
+      if (notificationAudioContextRef.current) {
+        void notificationAudioContextRef.current.close();
+        notificationAudioContextRef.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isNotificationSoundEnabled) {
+      return undefined;
+    }
+
+    const unlockAudio = () => {
+      void unlockNotificationAudio(notificationAudioContextRef);
+    };
+    const events = ['pointerdown', 'touchstart', 'keydown'];
+
+    events.forEach((eventName) => window.addEventListener(eventName, unlockAudio, { passive: true }));
+
+    return () => {
+      events.forEach((eventName) => window.removeEventListener(eventName, unlockAudio));
+    };
+  }, [isNotificationSoundEnabled]);
+
+  useEffect(() => {
+    if (activeType === 'REQUEST' || isSearchExpanded) {
+      setIsDealViewControlVisible(false);
+      return undefined;
+    }
+
+    setIsDealViewControlVisible(true);
+
+    const hideUntilIdle = () => {
+      setIsDealViewControlVisible(false);
+
+      if (dealViewControlTimerRef.current) {
+        window.clearTimeout(dealViewControlTimerRef.current);
+      }
+
+      dealViewControlTimerRef.current = window.setTimeout(() => {
+        setIsDealViewControlVisible(true);
+      }, 3500);
+    };
+
+    const events = ['scroll', 'wheel', 'touchmove'];
+    events.forEach((eventName) => window.addEventListener(eventName, hideUntilIdle, { passive: true }));
+
+    return () => {
+      if (dealViewControlTimerRef.current) {
+        window.clearTimeout(dealViewControlTimerRef.current);
+        dealViewControlTimerRef.current = null;
+      }
+
+      events.forEach((eventName) => window.removeEventListener(eventName, hideUntilIdle));
+    };
+  }, [activeType, isSearchExpanded]);
 
   useEffect(() => {
     if (profileRestoreAppliedRef.current) {
@@ -534,6 +1292,9 @@ function HomePage() {
         }
         if (typeof context.ui.activeCategory === 'number') {
           setActiveCategory(context.ui.activeCategory);
+        }
+        if (typeof context.ui.hideFullCampaigns === 'boolean') {
+          setHideFullCampaigns(context.ui.hideFullCampaigns);
         }
         if (typeof context.ui.activeStore === 'number') {
           setActiveStore(context.ui.activeStore);
@@ -667,7 +1428,11 @@ function HomePage() {
       }
 
       const nextUser = normalizeUser(event.data.user);
-      setStoredAuth({ token: event.data.token, user: nextUser });
+      setStoredAuth({
+        token: event.data.token,
+        refreshToken: event.data.refreshToken,
+        user: nextUser,
+      });
       setToken(event.data.token);
       setUser(nextUser);
       setProfileDraft(nextUser ?? { displayName: '', hasCostcoMembership: false });
@@ -676,6 +1441,7 @@ function HomePage() {
       setIsLoginModalOpen(false);
       setIsProfileOpen(true);
       setIsNotificationsOpen(false);
+      setIsChatRoomsOpen(false);
       setIsCreateCampaignOpen(false);
     };
 
@@ -687,6 +1453,10 @@ function HomePage() {
     if (!token) {
       setNotifications([]);
       setReadNotifications([]);
+      setChatRooms([]);
+      setChatRoomsError('');
+      setIsChatRoomsLoading(false);
+      setIsChatRoomsOpen(false);
       setNotificationsError('');
       setReadNotificationsError('');
       setIsNotificationsLoading(false);
@@ -771,16 +1541,11 @@ function HomePage() {
                 const incomingNotification = normalizeNotification(JSON.parse(frame.body));
 
                 if (!disposed) {
-                  setLiveNotification(incomingNotification);
-
-                  if (liveNotificationTimerRef.current) {
-                    window.clearTimeout(liveNotificationTimerRef.current);
+                  if (notificationSoundEnabledRef.current) {
+                    void playNotificationSound(notificationAudioContextRef);
                   }
 
-                  liveNotificationTimerRef.current = window.setTimeout(() => {
-                    setLiveNotification(null);
-                    liveNotificationTimerRef.current = null;
-                  }, 5000);
+                  pushLiveNotification(incomingNotification);
                 }
 
                 fetchUnreadNotifications(token)
@@ -819,7 +1584,7 @@ function HomePage() {
       notificationClientRef.current?.deactivate();
       notificationClientRef.current = null;
     };
-  }, [token, wsUrl]);
+  }, [pushLiveNotification, token, wsUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -913,7 +1678,7 @@ function HomePage() {
         });
 
         const items = Array.isArray(data?.content)
-          ? data.content.map(mapCampaign).filter((item) => item.scenarioType === activeType && item.availableQuantity > 0)
+          ? data.content.map(mapCampaign).filter((item) => canDisplayMarketCampaign(item, activeType, hideFullCampaigns))
           : [];
         const nextSignature = getCampaignListSignature(items);
 
@@ -934,7 +1699,7 @@ function HomePage() {
         }
       }
     },
-    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, token]
+    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, hideFullCampaigns, token]
   );
 
   useEffect(() => {
@@ -1006,7 +1771,7 @@ function HomePage() {
             const nextItems = Array.isArray(data?.content)
               ? data.content
                   .map((item, index) => mapCampaign(item, campaigns.length + index))
-                  .filter((item) => item.scenarioType === activeType && item.availableQuantity > 0)
+                  .filter((item) => canDisplayMarketCampaign(item, activeType, hideFullCampaigns))
               : [];
 
             setCampaigns((current) => [...current, ...nextItems]);
@@ -1026,7 +1791,7 @@ function HomePage() {
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [activeCategory, activeStore, activeType, campaigns.length, deferredSearch, hasMore, isInitialLoading, isLoadingMore, page]);
+  }, [activeCategory, activeStore, activeType, campaigns.length, deferredSearch, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
 
   const openProfile = () => {
     setAuthError('');
@@ -1075,13 +1840,18 @@ function HomePage() {
         displayName: `開發者 ${data.userId ?? normalizedUserId}`,
       });
 
-      setStoredAuth({ token: data.token, user: nextUser });
+      setStoredAuth({
+        token: data.token,
+        refreshToken: data.refreshToken,
+        user: nextUser,
+      });
       setToken(data.token);
       setUser(nextUser);
       setProfileDraft(nextUser ?? { displayName: '', hasCostcoMembership: false });
       setIsLoginModalOpen(false);
       setIsProfileOpen(false);
       setIsNotificationsOpen(false);
+      setIsChatRoomsOpen(false);
       setIsCreateCampaignOpen(false);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : '開發者登入失敗');
@@ -1097,8 +1867,55 @@ function HomePage() {
     setProfileDraft({ displayName: '', hasCostcoMembership: false });
     setIsProfileOpen(false);
     setIsNotificationsOpen(false);
+    setIsChatRoomsOpen(false);
+    setChatRooms([]);
+    setChatRoomsError('');
     setIsCreateCampaignOpen(false);
   };
+
+  const handleToggleNotificationSound = () => {
+    const nextEnabled = !isNotificationSoundEnabled;
+
+    setIsNotificationSoundEnabled(nextEnabled);
+    localStorage.setItem(NOTIFICATION_SOUND_ENABLED_KEY, String(nextEnabled));
+
+    if (nextEnabled) {
+      void unlockNotificationAudio(notificationAudioContextRef);
+    }
+  };
+
+  const markChatRoomAsRead = useCallback(
+    (campaignId, readAt = new Date().toISOString()) => {
+      if (!user?.id || campaignId == null) {
+        return;
+      }
+
+      const currentReads = getStoredChatRoomLastReads(user.id);
+      const roomKey = String(campaignId);
+      const nextReadAt = normalizeReadTimestamp(currentReads[roomKey], readAt);
+
+      if (currentReads[roomKey] === nextReadAt) {
+        return;
+      }
+
+      setStoredChatRoomLastReads(user.id, {
+        ...currentReads,
+        [roomKey]: nextReadAt,
+      });
+
+      setChatRooms((current) =>
+        current.map((room) =>
+          Number(room?.id ?? room?.campaignId) === Number(campaignId)
+            ? {
+                ...room,
+                unreadMessageCount: 0,
+              }
+            : room
+        )
+      );
+    },
+    [user?.id]
+  );
 
   const markNotificationAsRead = async (notificationId, sourceNotification = null) => {
     if (!token) {
@@ -1173,6 +1990,87 @@ function HomePage() {
     );
 
     return matchedCampaign ? mapCampaign(matchedCampaign) : null;
+  };
+
+  const loadOpenChatRooms = useCallback(async ({ silent = false } = {}) => {
+    if (!token) {
+      setChatRooms([]);
+      setChatRoomsError('');
+      setIsChatRoomsLoading(false);
+      return;
+    }
+
+    if (!silent) {
+      setIsChatRoomsLoading(true);
+    }
+    setChatRoomsError('');
+
+    try {
+      const query = { page: 0, size: CHAT_ROOM_PAGE_SIZE };
+      const [hostedData, joinedData] = await Promise.all([
+        fetchMyHostedCampaigns(query, token),
+        fetchMyJoinedCampaigns(query, token),
+      ]);
+
+      const openRooms = buildOpenChatRooms(hostedData, joinedData);
+      const roomsWithUnreadCounts = await mapWithConcurrency(openRooms, 4, async (room) => {
+        const roomId = room?.id ?? room?.campaignId;
+
+        if (roomId == null) {
+          return {
+            ...room,
+            unreadMessageCount: 0,
+          };
+        }
+
+        try {
+          const messages = await fetchCampaignChatMessages(roomId, token);
+          const lastReadAt = getStoredChatRoomLastReads(user?.id)[String(roomId)];
+
+          return {
+            ...room,
+            unreadMessageCount: countUnreadChatMessages(messages, user?.id, lastReadAt),
+          };
+        } catch {
+          return {
+            ...room,
+            unreadMessageCount: 0,
+          };
+        }
+      });
+
+      setChatRooms(roomsWithUnreadCounts);
+    } catch (error) {
+      setChatRooms([]);
+      setChatRoomsError(error instanceof Error ? error.message : '聊天室列表載入失敗');
+    } finally {
+      if (!silent) {
+        setIsChatRoomsLoading(false);
+      }
+    }
+  }, [token, user?.id]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+
+    void loadOpenChatRooms({ silent: true });
+  }, [loadOpenChatRooms, refreshKey, token]);
+
+  const handleOpenChatRooms = () => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    setIsChatRoomsOpen(true);
+    void loadOpenChatRooms();
+  };
+
+  const handleOpenChatRoom = async (room) => {
+    setIsChatRoomsOpen(false);
+    await handleOpenChat(room);
   };
 
   const handleNotificationAction = async (notification) => {
@@ -1437,7 +2335,7 @@ function HomePage() {
     const gestureTarget = event.target;
     if (
       gestureTarget instanceof Element &&
-      gestureTarget.closest('.category-strip, .store-selector, .search-box')
+      gestureTarget.closest('.category-strip, .category-select, .market-checkbox-filter, .store-selector, .search-box')
     ) {
       swipeStartXRef.current = null;
       pullStartYRef.current = null;
@@ -1639,6 +2537,34 @@ function HomePage() {
     }
   };
 
+  const handleLiveNotificationAction = async (notification) => {
+    if (!notification) {
+      return;
+    }
+
+    dismissLiveNotification(notification.toastKey ?? getLiveNotificationKey(notification));
+
+    if (isFullCampaignNotification(notification) || isReviewCampaignNotification(notification)) {
+      await handleNotificationAction(notification);
+      return;
+    }
+
+    setIsNotificationsOpen(true);
+  };
+
+  const showSuccessToast = (title, message) => {
+    setSuccessToast({ title, message });
+
+    if (successToastTimerRef.current) {
+      window.clearTimeout(successToastTimerRef.current);
+    }
+
+    successToastTimerRef.current = window.setTimeout(() => {
+      setSuccessToast(null);
+      successToastTimerRef.current = null;
+    }, 3600);
+  };
+
   const handleOpenJoinCampaign = (deal) => {
     if (!token) {
       setIsLoginModalOpen(true);
@@ -1704,12 +2630,14 @@ function HomePage() {
             : campaign
         );
 
-        return activeType === 'MINE' ? nextCampaigns : nextCampaigns.filter((campaign) => campaign.availableQuantity > 0);
+        return activeType === 'MINE'
+          ? nextCampaigns
+          : nextCampaigns.filter((campaign) => canDisplayMarketCampaign(campaign, activeType, hideFullCampaigns));
       });
       setSelectedDealToJoin(null);
       setPurchaseQuantity('1');
       setPurchaseError('');
-      window.alert(`\u5df2\u52a0\u5165\u5718\u8cfc\uff0c\u8a8d\u8cfc ${normalizedQuantity} \u4ef6`);
+      showSuccessToast('已加入團購', `認購 ${normalizedQuantity} 件，請留意後續通知。`);
     } catch (error) {
       setPurchaseError(error.message);
     } finally {
@@ -1717,14 +2645,52 @@ function HomePage() {
     }
   };
 
+  const patchCampaignImages = (campaignId, images, imageOrderNames) => {
+    const applyImageOrder = (campaign) =>
+      campaign && Number(campaign.id ?? campaign.campaignId) === Number(campaignId)
+        ? {
+            ...campaign,
+            imageUrls: images,
+            imageRefs: imageOrderNames,
+            image: images[0] ?? campaign.image,
+          }
+        : campaign;
+
+    setCampaigns((current) => current.map(applyImageOrder));
+    setChatCampaign((current) => (current ? applyImageOrder(current) : current));
+    setParticipationCampaign((current) => (current ? applyImageOrder(current) : current));
+  };
+
   const handleOpenGallery = (deal, startIndex = 0) => {
-    const images = Array.isArray(deal.imageUrls) && deal.imageUrls.length > 0 ? deal.imageUrls : [deal.image];
+    const images = (Array.isArray(deal.imageUrls) && deal.imageUrls.length > 0 ? deal.imageUrls : [deal.image]).filter(Boolean);
+    const orderNames = getCampaignImageOrderNames({ ...deal, imageUrls: images }, images);
+    const canReorder = canReorderCampaignImages({ ...deal, imageUrls: images }, user);
+
     setGalleryState({
       isOpen: true,
       title: deal.itemName,
+      campaignId: deal.id ?? deal.campaignId ?? null,
       images,
+      imageOrderNames: canReorder ? orderNames : [],
+      originalImageOrderNames: canReorder ? orderNames : [],
       activeIndex: Math.min(Math.max(startIndex, 0), images.length - 1),
+      canReorder,
+      hasOrderChanges: false,
+      isSavingOrder: false,
+      orderMessage: '',
+      orderError: '',
     });
+  };
+
+  const handleOpenImageOrderFromParticipation = (campaign) => {
+    if (!campaign) {
+      return;
+    }
+
+    handleOpenGallery(campaign, 0);
+    setParticipationCampaign(null);
+    setParticipationQuantityDraft('1');
+    setParticipationError('');
   };
 
   const handleCloseGallery = () => {
@@ -1757,6 +2723,99 @@ function HomePage() {
     });
   };
 
+  const handleMoveGalleryImage = (fromIndex, toIndex) => {
+    setGalleryState((current) => {
+      if (!current.canReorder || current.isSavingOrder) {
+        return current;
+      }
+
+      const nextImages = reorderList(current.images, fromIndex, toIndex);
+      const nextOrderNames = reorderList(current.imageOrderNames, fromIndex, toIndex);
+
+      if (nextImages === current.images || nextOrderNames === current.imageOrderNames) {
+        return current;
+      }
+
+      return {
+        ...current,
+        images: nextImages,
+        imageOrderNames: nextOrderNames,
+        activeIndex: toIndex,
+        hasOrderChanges: !areStringArraysEqual(nextOrderNames, current.originalImageOrderNames),
+        orderMessage: '',
+        orderError: '',
+      };
+    });
+  };
+
+  const handleMoveGalleryImageToFront = (fromIndex) => {
+    handleMoveGalleryImage(fromIndex, 0);
+  };
+
+  const handleSaveGalleryImageOrder = async () => {
+    const {
+      campaignId,
+      images,
+      imageOrderNames,
+      canReorder,
+      hasOrderChanges,
+      isSavingOrder,
+    } = galleryState;
+
+    if (!canReorder || !hasOrderChanges || isSavingOrder || !campaignId) {
+      return;
+    }
+
+    if (!token) {
+      setGalleryState((current) => ({
+        ...current,
+        orderError: '請先登入後再儲存圖片順序。',
+      }));
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    if (imageOrderNames.length !== images.length || imageOrderNames.some((name) => !name)) {
+      setGalleryState((current) => ({
+        ...current,
+        orderError: '圖片資料不完整，請重新整理後再試一次。',
+      }));
+      return;
+    }
+
+    setGalleryState((current) => ({
+      ...current,
+      isSavingOrder: true,
+      orderMessage: '',
+      orderError: '',
+    }));
+
+    try {
+      const response = await updateCampaignImageOrder(campaignId, imageOrderNames, token);
+
+      patchCampaignImages(campaignId, images, imageOrderNames);
+      setGalleryState((current) =>
+        Number(current.campaignId) === Number(campaignId)
+          ? {
+              ...current,
+              originalImageOrderNames: imageOrderNames,
+              hasOrderChanges: false,
+              isSavingOrder: false,
+              orderMessage: response?.message ?? '圖片順序已成功更新',
+              orderError: '',
+            }
+          : current
+      );
+      showSuccessToast('圖片順序已更新', '新的封面與排序已儲存。');
+    } catch (error) {
+      setGalleryState((current) => ({
+        ...current,
+        isSavingOrder: false,
+        orderError: error instanceof Error ? error.message : '圖片順序更新失敗',
+      }));
+    }
+  };
+
   const handleOpenUserProfile = (profileUser, source = 'card') => {
     if (!profileUser?.id) {
       return;
@@ -1770,6 +2829,7 @@ function HomePage() {
         ui: {
           activeType,
           activeCategory,
+          hideFullCampaigns,
           activeStore,
           activeMyCampaignScope,
           activeMyCampaignFilter,
@@ -1804,6 +2864,7 @@ function HomePage() {
     }
 
     await markCampaignChatNotificationsAsRead(nextDeal.id);
+    markChatRoomAsRead(nextDeal.id);
     setChatCampaign(nextDeal);
   };
 
@@ -2441,17 +3502,20 @@ function HomePage() {
     [findCampaignForNotification, token, user?.id]
   );
 
+  const latestLiveNotification = liveNotifications[0] ?? null;
+
   useEffect(() => {
-    if (!liveNotification?.referenceId || !chatCampaign?.id) {
+    if (!latestLiveNotification?.referenceId || !chatCampaign?.id) {
       return;
     }
 
-    if (Number(liveNotification.referenceId) !== Number(chatCampaign.id)) {
+    if (Number(latestLiveNotification.referenceId) !== Number(chatCampaign.id)) {
       return;
     }
 
     const notificationKey =
-      liveNotification.id ?? `${liveNotification.type}-${liveNotification.referenceId}-${liveNotification.createdAt}`;
+      latestLiveNotification.id ??
+      `${latestLiveNotification.type}-${latestLiveNotification.referenceId}-${latestLiveNotification.createdAt}`;
     if (lastHandledChatNotificationRef.current === notificationKey) {
       return;
     }
@@ -2463,21 +3527,21 @@ function HomePage() {
       CAMPAIGN_COMPLETED: 'COMPLETED',
       CAMPAIGN_CANCELLED: 'CANCELLED',
     };
-    const nextStatus = statusByNotificationType[liveNotification.type];
+    const nextStatus = statusByNotificationType[latestLiveNotification.type];
 
     if (!nextStatus) {
-      void refreshOpenChatCampaign(liveNotification.referenceId, liveNotification.content);
+      void refreshOpenChatCampaign(latestLiveNotification.referenceId, latestLiveNotification.content);
       return;
     }
 
     void handleCampaignStatusChange({
-      campaignId: liveNotification.referenceId,
+      campaignId: latestLiveNotification.referenceId,
       status: nextStatus,
-      message: liveNotification.content,
+      message: latestLiveNotification.content,
       source: 'notification',
     });
-    void refreshOpenChatCampaign(liveNotification.referenceId);
-  }, [chatCampaign?.id, handleCampaignStatusChange, liveNotification, refreshOpenChatCampaign]);
+    void refreshOpenChatCampaign(latestLiveNotification.referenceId);
+  }, [chatCampaign?.id, handleCampaignStatusChange, latestLiveNotification, refreshOpenChatCampaign]);
 
   const refreshHostParticipationCampaign = async (campaignId) => {
     const dashboard = await fetchHostDashboard(campaignId, token);
@@ -2706,6 +3770,50 @@ function HomePage() {
     }
   };
 
+  const dealViewModeScope = isDesktopViewport ? (activeType === 'MINE' ? 'mine' : 'market') : 'mobile';
+  const defaultDealViewMode =
+    isDesktopViewport && activeType === 'MINE' && activeMyCampaignScope === 'ALL' ? 'compact' : 'card';
+  const dealViewMode = dealViewModePreferences[dealViewModeScope] || defaultDealViewMode;
+  const isCompactDealList = activeType !== 'REQUEST' && dealViewMode === 'compact';
+  const isMineCompactList = activeType === 'MINE' && isCompactDealList;
+
+  const handleChangeDealViewMode = (nextMode) => {
+    setDealViewModePreferences((current) => ({
+      ...current,
+      [dealViewModeScope]: nextMode,
+    }));
+    localStorage.setItem(DEAL_VIEW_MODE_KEYS[dealViewModeScope], nextMode);
+    setExpandedCompactDealId('');
+  };
+
+  const renderFloatingDealViewControl = () => (
+    <div
+      className={isDealViewControlVisible ? 'floating-view-control' : 'floating-view-control hidden'}
+      aria-label="檢視模式"
+    >
+      <button
+        type="button"
+        className={dealViewMode === 'card' ? 'floating-view-button active' : 'floating-view-button'}
+        onClick={() => handleChangeDealViewMode('card')}
+        aria-pressed={dealViewMode === 'card'}
+        aria-label="卡片檢視"
+        title="卡片檢視"
+      >
+        <CardViewIcon />
+      </button>
+      <button
+        type="button"
+        className={dealViewMode === 'compact' ? 'floating-view-button active' : 'floating-view-button'}
+        onClick={() => handleChangeDealViewMode('compact')}
+        aria-pressed={dealViewMode === 'compact'}
+        aria-label="精簡檢視"
+        title="精簡檢視"
+      >
+        <CompactViewIcon />
+      </button>
+    </div>
+  );
+
   return (
     <div
       className="app-shell"
@@ -2727,29 +3835,59 @@ function HomePage() {
         user={user}
         stores={stores}
         activeStore={activeStore}
+        chatUnreadRoomCount={chatUnreadRoomCount}
         unreadCount={notifications.length}
         onChangeStore={setActiveStore}
         onOpenProfile={openProfile}
+        onOpenChatRooms={handleOpenChatRooms}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onRefresh={refreshHome}
         isRefreshing={isRefreshing}
       />
 
-      {liveNotification && (
+      {liveNotifications.length > 0 && (
+        <div className="live-notification-stack" aria-live="polite" aria-atomic="false">
+          {liveNotifications.map((notification) => (
+            <article
+              key={notification.toastKey}
+              className={`live-notification-card ${getLiveNotificationTone(notification)}`}
+            >
+              <button
+                type="button"
+                className="live-notification-card-body"
+                onClick={() => void handleLiveNotificationAction(notification)}
+              >
+                <strong>{notification.typeLabel}</strong>
+                <span>{notification.content}</span>
+              </button>
+              <button
+                type="button"
+                className="live-notification-card-close"
+                onClick={() => dismissLiveNotification(notification.toastKey)}
+                aria-label="關閉提示"
+                title="關閉"
+              >
+                ×
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {successToast && (
         <button
           type="button"
-          className="live-notification-toast"
+          className="live-notification-toast success-toast"
           onClick={() => {
-            setIsNotificationsOpen(true);
-            setLiveNotification(null);
-            if (liveNotificationTimerRef.current) {
-              window.clearTimeout(liveNotificationTimerRef.current);
-              liveNotificationTimerRef.current = null;
+            setSuccessToast(null);
+            if (successToastTimerRef.current) {
+              window.clearTimeout(successToastTimerRef.current);
+              successToastTimerRef.current = null;
             }
           }}
         >
-          <strong>{liveNotification.typeLabel}</strong>
-          <span>{liveNotification.content}</span>
+          <strong>{successToast.title}</strong>
+          <span>{successToast.message}</span>
         </button>
       )}
 
@@ -2777,6 +3915,16 @@ function HomePage() {
         onToggleTheme={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
       />
 
+      <ChatRoomsModal
+        labels={LABELS}
+        isOpen={isChatRoomsOpen}
+        chatRooms={chatRooms}
+        isLoading={isChatRoomsLoading}
+        error={chatRoomsError}
+        onClose={() => setIsChatRoomsOpen(false)}
+        onOpenChat={handleOpenChatRoom}
+      />
+
       <NotificationsModal
         labels={LABELS}
         isOpen={isNotificationsOpen}
@@ -2786,6 +3934,8 @@ function HomePage() {
         isReadLoading={isReadNotificationsLoading}
         error={notificationsError}
         readError={readNotificationsError}
+        isSoundEnabled={isNotificationSoundEnabled}
+        onToggleSound={handleToggleNotificationSound}
         onClose={() => setIsNotificationsOpen(false)}
         onNotificationAction={handleNotificationAction}
       />
@@ -2836,6 +3986,14 @@ function HomePage() {
         onPrev={() => handleStepGallery('prev')}
         onNext={() => handleStepGallery('next')}
         onSelect={handleSelectGalleryImage}
+        canReorder={galleryState.canReorder}
+        canSaveOrder={galleryState.hasOrderChanges}
+        isSavingOrder={galleryState.isSavingOrder}
+        orderMessage={galleryState.orderMessage}
+        orderError={galleryState.orderError}
+        onMoveImage={handleMoveGalleryImage}
+        onMoveImageToFront={handleMoveGalleryImageToFront}
+        onSaveOrder={handleSaveGalleryImageOrder}
       />
 
       <CampaignChatModal
@@ -2854,6 +4012,7 @@ function HomePage() {
         externalStatusEvent={chatStatusEvent}
         isParticipantReviewCompleted={chatReviewState.isParticipantReviewed}
         isHostReviewCompleted={chatReviewState.isHostAllReviewed}
+        onMarkRead={markChatRoomAsRead}
         onClose={() => setChatCampaign(null)}
       />
 
@@ -2875,6 +4034,8 @@ function HomePage() {
         reviewedReviewKeys={reviewedReviewKeys}
         onOpenChat={handleOpenChatFromParticipation}
         canOpenChat={canOpenCampaignChat(participationCampaign)}
+        onOpenImageOrder={handleOpenImageOrderFromParticipation}
+        canReorderImages={canReorderCampaignImages(participationCampaign, user)}
       />
 
       <ReviewModal
@@ -2895,10 +4056,34 @@ function HomePage() {
         ) : activeType === 'MINE' ? (
           <section className="mine-page-header">
             <p className="eyebrow">我的團購</p>
+            <div className="type-switch-shell desktop-mine-type-switch">
+              <section className="type-switch">
+                <button type="button" className="mode-button active desktop-only-mode" onClick={() => switchActiveType('MINE')}>
+                  我的
+                </button>
+                {TYPE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={activeType === option.value ? 'mode-button active' : 'mode-button'}
+                    onClick={() => switchActiveType(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </section>
+            </div>
           </section>
         ) : (
           <div className="type-switch-shell">
             <section className="type-switch">
+              <button
+                type="button"
+                className="mode-button desktop-only-mode"
+                onClick={() => switchActiveType('MINE')}
+              >
+                我的
+              </button>
               {TYPE_OPTIONS.map((option) => (
                 <button
                   key={option.value}
@@ -2959,32 +4144,50 @@ function HomePage() {
             </label>
           </div>
         ) : (
-          <div className="category-scroll-area">
-            <section className="category-strip">
-              <button
-                type="button"
-                className={activeCategory === 0 ? 'category-button active' : 'category-button'}
-                onClick={() => setActiveCategory(0)}
-              >
-                {LABELS.all}
-              </button>
+          <div className="market-filter-row">
+            <label className="category-select">
+            <span className="category-select-label">類別</span>
+            <select value={activeCategory} onChange={(event) => setActiveCategory(Number(event.target.value))}>
+              <option value={0}>{LABELS.all}</option>
               {categories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  className={activeCategory === category.id ? 'category-button active' : 'category-button'}
-                  onClick={() => setActiveCategory(category.id)}
-                >
+                <option key={category.id} value={category.id}>
                   {category.icon ? `${category.icon} ${category.name}` : category.name}
-                </button>
+                </option>
               ))}
-            </section>
+            </select>
+            </label>
+            <label className="market-checkbox-filter">
+              <input
+                type="checkbox"
+                checked={hideFullCampaigns}
+                onChange={(event) => setHideFullCampaigns(event.target.checked)}
+              />
+              <span>隱藏已滿</span>
+            </label>
+            <label className="market-filter-hidden">
+              <span className="category-select-label">狀態</span>
+              <select value={activeMarketStatus} onChange={(event) => setActiveMarketStatus(event.target.value)}>
+                {MARKET_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
 
         {activeType !== 'REQUEST' && (
           <>
-            <section className="deal-grid">
+            <section
+              className={[
+                'deal-grid',
+                isCompactDealList ? 'compact-list-grid' : '',
+                isMineCompactList ? 'mine-compact-grid' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
               {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
               {referenceError && <p className="inline-error">{referenceError}</p>}
               {campaignError && <p className="inline-error">{campaignError}</p>}
@@ -2993,25 +4196,74 @@ function HomePage() {
                 <p className="state-message empty-card">{LABELS.emptyDeals}</p>
               )}
 
-              {campaigns.map((deal) => (
-                <DealCard
-                  key={deal.id}
-                  labels={uiLabels}
-                  deal={deal}
-                  countdownNow={countdownNow}
-                  formatCountdown={formatCountdown}
-                  formatDateTime={formatDateTime}
-                  getScenarioLabel={getScenarioLabel}
-                  getTypeClass={getTypeClass}
-                  onJoin={handleOpenJoinCampaign}
-                  onOpenGallery={handleOpenGallery}
-                  onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
-                  onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
-                  onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
-                  showJoinAction={activeType !== 'MINE' && !isSameUserId(deal.host?.id, user?.id)}
-                  isHighlighted={String(deal.id) === String(focusedCampaignId)}
-                />
-              ))}
+              {campaigns.map((deal, index) => {
+                const dealViewKey = getDealViewKey(deal, index);
+                const isExpandedCompactDeal = isCompactDealList && expandedCompactDealId === dealViewKey;
+                const isHighlighted = String(deal.id) === String(focusedCampaignId);
+
+                if (isMineCompactList && !isExpandedCompactDeal) {
+                  return (
+                    <CompactMineDealRow
+                      key={dealViewKey}
+                      deal={deal}
+                      index={index}
+                      labels={uiLabels}
+                      isHighlighted={isHighlighted}
+                      onExpand={setExpandedCompactDealId}
+                      onOpenGallery={handleOpenGallery}
+                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
+                    />
+                  );
+                }
+
+                if (isCompactDealList && activeType !== 'MINE' && !isExpandedCompactDeal) {
+                  return (
+                    <CompactDealRow
+                      key={dealViewKey}
+                      deal={deal}
+                      index={index}
+                      labels={uiLabels}
+                      countdownNow={countdownNow}
+                      formatCountdown={formatCountdown}
+                      formatDateTime={formatDateTime}
+                      getScenarioLabel={getScenarioLabel}
+                      getTypeClass={getTypeClass}
+                      isHighlighted={isHighlighted}
+                      onExpand={setExpandedCompactDealId}
+                      onOpenGallery={handleOpenGallery}
+                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
+                    />
+                  );
+                }
+
+                return (
+                  <div key={dealViewKey} className={isCompactDealList ? 'mine-expanded-card' : undefined}>
+                    {isCompactDealList && (
+                      <div className="mine-expanded-card-actions">
+                        <button type="button" className="text-button" onClick={() => setExpandedCompactDealId('')}>
+                          收合
+                        </button>
+                      </div>
+                    )}
+                    <DealCard
+                      labels={uiLabels}
+                      deal={deal}
+                      countdownNow={countdownNow}
+                      formatCountdown={formatCountdown}
+                      formatDateTime={formatDateTime}
+                      getScenarioLabel={getScenarioLabel}
+                      getTypeClass={getTypeClass}
+                      onJoin={handleOpenJoinCampaign}
+                      onOpenGallery={handleOpenGallery}
+                      onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
+                      onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
+                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
+                      showJoinAction={activeType !== 'MINE' && !isSameUserId(deal.host?.id, user?.id)}
+                      isHighlighted={isHighlighted}
+                    />
+                  </div>
+                );
+              })}
             </section>
             {renderPageDots()}
 
@@ -3022,6 +4274,8 @@ function HomePage() {
         )}
         </div>
       </main>
+
+      {activeType !== 'REQUEST' && !isSearchExpanded && renderFloatingDealViewControl()}
 
       <footer className={isSearchExpanded ? 'bottom-bar search-expanded' : 'bottom-bar'}>
         <label
