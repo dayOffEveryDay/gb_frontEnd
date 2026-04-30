@@ -48,6 +48,7 @@ const USER_KEY = 'current_user';
 const LINE_STATE_KEY = 'line_login_state';
 const LINE_LOGIN_SUCCESS_MESSAGE = 'line-login-success';
 export const AUTH_STORAGE_EVENT = 'gb-auth-change';
+export const AUTH_EXPIRED_MESSAGE = '登入已到期，請重新登入。';
 
 let refreshRequestPromise = null;
 
@@ -64,8 +65,8 @@ function buildUrl(path, query = {}) {
   return url.toString();
 }
 
-function dispatchAuthStorageChange() {
-  window.dispatchEvent(new Event(AUTH_STORAGE_EVENT));
+function dispatchAuthStorageChange(detail = {}) {
+  window.dispatchEvent(new CustomEvent(AUTH_STORAGE_EVENT, { detail }));
 }
 
 function buildRequestHeaders({ body, headers, token }) {
@@ -83,6 +84,18 @@ async function parseResponse(response) {
 
 function createApiError(data, fallbackMessage = 'API request failed.') {
   return new Error(data?.message || data?.error || fallbackMessage);
+}
+
+function createAuthExpiredError() {
+  const error = new Error(AUTH_EXPIRED_MESSAGE);
+  error.name = 'AuthExpiredError';
+  error.status = 401;
+  error.isAuthExpired = true;
+  return error;
+}
+
+function isAuthFailureStatus(status) {
+  return status === 401 || status === 403;
 }
 
 async function executeRequest(path, { method = 'GET', body, token, headers = {}, query } = {}) {
@@ -146,7 +159,7 @@ async function request(path, options = {}) {
   const canRefresh =
     !skipAuthRefresh &&
     !path.startsWith('/api/v1/auth/') &&
-    (response.status === 401 || response.status === 403) &&
+    isAuthFailureStatus(response.status) &&
     Boolean(requestOptions.token || getStoredToken()) &&
     Boolean(getStoredRefreshToken());
 
@@ -162,11 +175,21 @@ async function request(path, options = {}) {
         return retryResult.data;
       }
 
+      if (isAuthFailureStatus(retryResult.response.status)) {
+        clearStoredAuth({ reason: 'expired' });
+        throw createAuthExpiredError();
+      }
+
       throw createApiError(retryResult.data);
     } catch (error) {
-      clearStoredAuth();
-      throw error instanceof Error ? error : new Error('Login expired. Please sign in again.');
+      clearStoredAuth({ reason: 'expired' });
+      throw error?.isAuthExpired ? error : createAuthExpiredError();
     }
+  }
+
+  if (!path.startsWith('/api/v1/auth/') && isAuthFailureStatus(response.status) && Boolean(requestOptions.token || getStoredToken())) {
+    clearStoredAuth({ reason: 'expired' });
+    throw createAuthExpiredError();
   }
 
   throw createApiError(data);
@@ -217,11 +240,11 @@ export function setStoredAuth({ token, refreshToken, user } = {}) {
 }
 
 // 登出時清空本地登入資訊。
-export function clearStoredAuth() {
+export function clearStoredAuth({ reason = 'logout' } = {}) {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
-  dispatchAuthStorageChange();
+  dispatchAuthStorageChange({ reason });
 }
 
 // 從 localStorage 還原使用者資訊，並處理壞掉的 JSON。
@@ -425,6 +448,144 @@ export function createReview(payload, token) {
 }
 
 // 把 LINE callback code 送到後端，交換 JWT 與使用者資料。
+export function fetchPurchaseRequests(params, token) {
+  return request('/api/v1/purchase-requests', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchPurchaseRequest(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}`, {
+    token,
+  });
+}
+
+export function createPurchaseRequest(payload, token) {
+  const formData = new FormData();
+
+  Object.entries(payload).forEach(([key, value]) => {
+    if (key === 'images' && Array.isArray(value)) {
+      value.forEach((file) => {
+        formData.append('images', file);
+      });
+      return;
+    }
+
+    if (value !== undefined && value !== null && value !== '') {
+      formData.append(key, value);
+    }
+  });
+
+  return request('/api/v1/purchase-requests', {
+    method: 'POST',
+    body: formData,
+    token,
+  });
+}
+
+export function updatePurchaseRequestImageOrder(requestId, imageUrls, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/images/order`, {
+    method: 'PUT',
+    body: {
+      imageUrls,
+    },
+    token,
+  });
+}
+
+export function acceptPurchaseRequest(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/accept`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function createPurchaseRequestQuote(requestId, payload, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function fetchPurchaseRequestQuotes(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes`, {
+    token,
+  });
+}
+
+export function acceptPurchaseRequestQuote(requestId, quoteId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}/accept`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function deliverPurchaseRequest(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/deliver`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function completePurchaseRequest(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/complete`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function cancelPurchaseRequest(requestId, token, reason) {
+  return request(`/api/v1/purchase-requests/${requestId}/cancel`, {
+    method: 'POST',
+    body: reason ? { reason } : undefined,
+    token,
+  });
+}
+
+export function fetchMyCreatedPurchaseRequests(params, token) {
+  return request('/api/v1/purchase-requests/my-created', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchMyAssignedPurchaseRequests(params, token) {
+  return request('/api/v1/purchase-requests/my-assigned', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchMyQuotedPurchaseRequests(params, token) {
+  return request('/api/v1/purchase-requests/my-quotes', {
+    query: params,
+    token,
+  });
+}
+
+export function createPurchaseRequestReview(requestId, payload, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/reviews`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function checkPurchaseRequestReviewStatus(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/reviews/status`, {
+    token,
+  });
+}
+
+export function fetchMyReceivedPurchaseRequestReviews(params, token) {
+  return request('/api/v1/purchase-requests/me/received-reviews', {
+    query: params,
+    token,
+  });
+}
+
 export function lineLogin(payload) {
   return request('/api/v1/auth/line', {
     method: 'POST',

@@ -53,6 +53,78 @@ export function RefreshIcon() {
   );
 }
 
+export function LandmarkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <ellipse cx="12" cy="20" rx="7.2" ry="2.1" fill="currentColor" opacity="0.32" />
+      <path d="M12 2.5a6.5 6.5 0 0 0-6.5 6.5c0 4.9 6.5 11.4 6.5 11.4S18.5 13.9 18.5 9A6.5 6.5 0 0 0 12 2.5Zm0 9.1A2.6 2.6 0 1 1 12 6.4a2.6 2.6 0 0 1 0 5.2Z" />
+    </svg>
+  );
+}
+
+export function MyDealsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M9.5 4.75h8.25A2.25 2.25 0 0 1 20 7v7.25a2.25 2.25 0 0 1-2.25 2.25h-3.1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M7.25 7.5h8.25a2 2 0 0 1 2 2v5.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+        opacity="0.55"
+      />
+      <path
+        d="M14 8.6h2.3M14 11.6h2.3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+      <path d="M7.1 14.1a3.05 3.05 0 1 0 0-6.1 3.05 3.05 0 0 0 0 6.1Zm0 1.35c-3.15 0-5.6 1.6-5.6 3.75v.55h11.2v-.55c0-2.15-2.45-3.75-5.6-3.75Z" />
+    </svg>
+  );
+}
+
+export function CartHandshakeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M3 4.8h2.05l1.35 8.1a2.2 2.2 0 0 0 2.18 1.85h7.92a2.2 2.2 0 0 0 2.1-1.55l1.15-4.05H7.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
+      <path
+        d="M4.35 15.9 6.1 14.3c.5-.45 1.22-.55 1.82-.25l.72.36c.38.19.84.17 1.2-.05l.95-.58 1.95 2.04-2.45 2.3a1.24 1.24 0 0 1-1.56.1L7.5 17.35l-.72.65a1.02 1.02 0 0 1-1.4-.02l-1.02-.98a.78.78 0 0 1-.01-1.1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M7.55 17.35 6.1 16.08M9.85 14.36l1.64 1.66"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.28"
+      />
+      <path d="M9.1 19.15a1.35 1.35 0 1 0 0-2.7 1.35 1.35 0 0 0 0 2.7Zm8 0a1.35 1.35 0 1 0 0-2.7 1.35 1.35 0 0 0 0 2.7Z" />
+    </svg>
+  );
+}
+
 export function ChatIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -119,10 +191,14 @@ export function CardViewIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path
-        fillRule="evenodd"
-        d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1.6 2.4v11.2h10.8V6.4H6.6Z"
-        clipRule="evenodd"
+        d="M5.2 4.6h13.6a1.6 1.6 0 0 1 1.6 1.6v11.6a1.6 1.6 0 0 1-1.6 1.6H5.2a1.6 1.6 0 0 1-1.6-1.6V6.2a1.6 1.6 0 0 1 1.6-1.6Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
       />
+      <path d="m5.7 17 4.8-5.4 3.1 3.5 1.7-1.9 3 3.8H5.7Z" />
+      <circle cx="16.2" cy="8.4" r="1.9" />
     </svg>
   );
 }

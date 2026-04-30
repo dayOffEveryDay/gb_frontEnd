@@ -1,4 +1,4 @@
-import { AvatarIcon, BellIcon, ChatRoomsIcon, RefreshIcon } from './Icons';
+import { AvatarIcon, BellIcon, ChatRoomsIcon, LandmarkIcon, RefreshIcon } from './Icons';
 
 function HomeTopBar({
   labels,
@@ -34,7 +34,10 @@ function HomeTopBar({
       </button>
 
       <div className="store-selector">
-        <span className="selector-label">{labels.currentStore}</span>
+        <span className="selector-label">
+          <LandmarkIcon />
+          {labels.currentStore}
+        </span>
         <select value={activeStore} onChange={(event) => onChangeStore(Number(event.target.value))}>
           <option value={0}>{labels.all}</option>
           {stores.map((store) => (

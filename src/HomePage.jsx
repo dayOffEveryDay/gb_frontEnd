@@ -3,6 +3,7 @@ import { Client } from '@stomp/stompjs';
 import { useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
 import {
+  AUTH_EXPIRED_MESSAGE,
   AUTH_STORAGE_EVENT,
   cancelCampaign,
   checkReviewStatus,
@@ -70,7 +71,24 @@ import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
-import { AvatarIcon, CardViewIcon, CompactViewIcon, DiagonalExpandIcon, SearchIcon } from './Icons';
+import PurchaseRequestsPanel from './PurchaseRequestsPanel';
+import {
+  AvatarIcon,
+  CardViewIcon,
+  CompactViewIcon,
+  DiagonalExpandIcon,
+  MyDealsIcon,
+  SearchIcon,
+} from './Icons';
+
+const MAX_PROXY_REQUEST_IMAGES = 3;
+
+function getProxyRequestImageFileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+const CHAT_ROOMS_LOAD_ERROR_MESSAGE = '部分聊天室資料異常，暫時無法完整載入。請稍後再試，或從通知／我的團購開啟聊天室。';
+const CHAT_ROOM_UNAVAILABLE_MESSAGE = '這筆聊天室資料異常或已不存在，暫時無法開啟。';
 
 const MINE_CAMPAIGN_BUCKET_LABELS = {
   ACTIVE: '進行中',
@@ -88,6 +106,7 @@ const MARKET_STATUS_OPTIONS = [
 const DEAL_VIEW_MODE_KEYS = {
   market: 'deal_view_mode_market',
   mine: 'deal_view_mode_mine',
+  request: 'deal_view_mode_request',
   mobile: 'deal_view_mode_mobile',
 };
 const MARKET_HIDE_FULL_KEY = 'market_hide_full';
@@ -212,6 +231,7 @@ function getInitialDealViewModePreferences() {
   return {
     market: getStoredDealViewModePreference('market'),
     mine: getStoredDealViewModePreference('mine'),
+    request: getStoredDealViewModePreference('request'),
     mobile: getStoredDealViewModePreference('mobile'),
   };
 }
@@ -727,6 +747,10 @@ function buildHostParticipationCampaign(deal, dashboard) {
 }
 
 function canOpenCampaignChat(campaign) {
+  if (!hasUsableCampaignId(campaign)) {
+    return false;
+  }
+
   const statusSource = [
     campaign?.status,
     campaign?.campaignStatus,
@@ -742,6 +766,30 @@ function canOpenCampaignChat(campaign) {
   }
 
   return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
+}
+
+function getCampaignIdValue(campaign) {
+  return campaign?.id ?? campaign?.campaignId;
+}
+
+function getNormalizedCampaignId(campaign) {
+  const campaignId = getCampaignIdValue(campaign);
+
+  if (campaignId == null) {
+    return null;
+  }
+
+  const campaignIdText = String(campaignId).trim();
+  if (!campaignIdText) {
+    return null;
+  }
+
+  const normalizedCampaignId = Number(campaignIdText);
+  return Number.isInteger(normalizedCampaignId) && normalizedCampaignId > 0 ? normalizedCampaignId : null;
+}
+
+function hasUsableCampaignId(campaign) {
+  return getNormalizedCampaignId(campaign) != null;
 }
 
 function canDisplayMarketCampaign(campaign, activeType, hideFull = false) {
@@ -860,6 +908,7 @@ function getChatRoomSortTime(campaign) {
 
 function buildOpenChatRooms(hostedData, joinedData) {
   return buildMineCampaigns(hostedData, joinedData, 'ALL', 'ALL')
+    .filter(hasUsableCampaignId)
     .filter(canListCampaignChatRoom)
     .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
 }
@@ -1039,6 +1088,16 @@ function HomePage() {
   const [purchaseQuantity, setPurchaseQuantity] = useState('1');
   const [purchaseError, setPurchaseError] = useState('');
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+  const [requestRewardMethod, setRequestRewardMethod] = useState('fixed');
+  const [requestDeliveryMethod, setRequestDeliveryMethod] = useState('meetup');
+  const [requestCompletionTimeMode, setRequestCompletionTimeMode] = useState('specific');
+  const [requestDeadlineMode, setRequestDeadlineMode] = useState('specific');
+  const [requestDraftMessage, setRequestDraftMessage] = useState('');
+  const [isProxyRequestFormOpen, setIsProxyRequestFormOpen] = useState(false);
+  const [isProxyRequestModalOpen, setIsProxyRequestModalOpen] = useState(false);
+  const [proxyRequestImages, setProxyRequestImages] = useState([]);
+  const [activeProxyRequestImageIndex, setActiveProxyRequestImageIndex] = useState(0);
+  const proxyRequestPreviewTouchStartXRef = useRef(null);
   const [participationCampaign, setParticipationCampaign] = useState(null);
   const [participationQuantityDraft, setParticipationQuantityDraft] = useState('1');
   const [participationError, setParticipationError] = useState('');
@@ -1066,12 +1125,25 @@ function HomePage() {
     orderError: '',
   });
   useEffect(() => {
-    const syncAuthState = () => {
+    const syncAuthState = (event) => {
       const nextToken = getStoredToken();
       const nextUser = normalizeUser(getStoredUser());
 
       setToken((current) => (current === nextToken ? current : nextToken));
       setUser((current) => (areUsersEquivalent(current, nextUser) ? current : nextUser));
+
+      if (event?.detail?.reason === 'expired') {
+        setAuthError(AUTH_EXPIRED_MESSAGE);
+        setIsLoginModalOpen(true);
+        setIsProfileOpen(false);
+        setIsNotificationsOpen(false);
+        setIsChatRoomsOpen(false);
+        setChatCampaign(null);
+        setChatRooms([]);
+        setChatRoomsError('');
+        setNotifications([]);
+        setReadNotifications([]);
+      }
     };
 
     const handleStorageChange = (event) => {
@@ -1134,6 +1206,33 @@ function HomePage() {
     () => chatRooms.reduce((count, room) => count + (Number(room?.unreadMessageCount ?? 0) > 0 ? 1 : 0), 0),
     [chatRooms]
   );
+  const groupBuyIconSrc = themeMode === 'dark' ? '/icons/Groip_Buy_W-256.png' : '/icons/Groip_Buy_B-256.png';
+  const proxyPurchaseIconSrc =
+    themeMode === 'dark' ? '/icons/proxy-purchase-request-w.png' : '/icons/proxy-purchase-request-b.png';
+  const proxyRequestImagePreviews = useMemo(
+    () =>
+      proxyRequestImages.map((file) => ({
+        file,
+        url: URL.createObjectURL(file),
+      })),
+    [proxyRequestImages]
+  );
+  const activeProxyRequestImagePreview = proxyRequestImagePreviews[activeProxyRequestImageIndex] ?? null;
+
+  useEffect(() => {
+    return () => {
+      proxyRequestImagePreviews.forEach(({ url }) => URL.revokeObjectURL(url));
+    };
+  }, [proxyRequestImagePreviews]);
+
+  useEffect(() => {
+    if (proxyRequestImagePreviews.length === 0) {
+      setActiveProxyRequestImageIndex(0);
+      return;
+    }
+
+    setActiveProxyRequestImageIndex((current) => Math.min(current, proxyRequestImagePreviews.length - 1));
+  }, [proxyRequestImagePreviews.length]);
 
   const dismissLiveNotification = useCallback((notificationKey) => {
     const timerId = liveNotificationTimersRef.current.get(notificationKey);
@@ -1237,7 +1336,7 @@ function HomePage() {
   }, [isNotificationSoundEnabled]);
 
   useEffect(() => {
-    if (activeType === 'REQUEST' || isSearchExpanded) {
+    if (isSearchExpanded) {
       setIsDealViewControlVisible(false);
       return undefined;
     }
@@ -1339,8 +1438,15 @@ function HomePage() {
   }, [campaigns, chatCampaign, isInitialLoading]);
 
   useEffect(() => {
+    if (location.state?.activeType) {
+      switchActiveType(location.state.activeType);
+    }
+
     const targetCampaignId = location.state?.focusCampaignId;
     if (!targetCampaignId) {
+      if (location.state?.activeType) {
+        window.history.replaceState({}, document.title);
+      }
       return;
     }
 
@@ -2007,14 +2113,28 @@ function HomePage() {
 
     try {
       const query = { page: 0, size: CHAT_ROOM_PAGE_SIZE };
-      const [hostedData, joinedData] = await Promise.all([
+      const [hostedResult, joinedResult] = await Promise.allSettled([
         fetchMyHostedCampaigns(query, token),
         fetchMyJoinedCampaigns(query, token),
       ]);
+      const hostedData = hostedResult.status === 'fulfilled' ? hostedResult.value : [];
+      const joinedData = joinedResult.status === 'fulfilled' ? joinedResult.value : [];
+      const hasAuthExpired = [hostedResult, joinedResult].some(
+        (result) => result.status === 'rejected' && result.reason?.message === AUTH_EXPIRED_MESSAGE
+      );
+      const hasSourceError = hostedResult.status === 'rejected' || joinedResult.status === 'rejected';
+
+      if (hasAuthExpired) {
+        setChatRooms([]);
+        setChatRoomsError(AUTH_EXPIRED_MESSAGE);
+        setAuthError(AUTH_EXPIRED_MESSAGE);
+        setIsLoginModalOpen(true);
+        return;
+      }
 
       const openRooms = buildOpenChatRooms(hostedData, joinedData);
       const roomsWithUnreadCounts = await mapWithConcurrency(openRooms, 4, async (room) => {
-        const roomId = room?.id ?? room?.campaignId;
+        const roomId = getNormalizedCampaignId(room);
 
         if (roomId == null) {
           return {
@@ -2040,9 +2160,13 @@ function HomePage() {
       });
 
       setChatRooms(roomsWithUnreadCounts);
-    } catch (error) {
-      setChatRooms([]);
-      setChatRoomsError(error instanceof Error ? error.message : '聊天室列表載入失敗');
+      if (!silent && hasSourceError) {
+        setChatRoomsError(CHAT_ROOMS_LOAD_ERROR_MESSAGE);
+      }
+    } catch {
+      if (!silent) {
+        setChatRoomsError(CHAT_ROOMS_LOAD_ERROR_MESSAGE);
+      }
     } finally {
       if (!silent) {
         setIsChatRoomsLoading(false);
@@ -2069,8 +2193,15 @@ function HomePage() {
   };
 
   const handleOpenChatRoom = async (room) => {
-    setIsChatRoomsOpen(false);
-    await handleOpenChat(room);
+    setChatRoomsError('');
+
+    const opened = await handleOpenChat(room, { showError: false });
+    if (opened) {
+      setIsChatRoomsOpen(false);
+      return;
+    }
+
+    setChatRoomsError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
   };
 
   const handleNotificationAction = async (notification) => {
@@ -2213,6 +2344,10 @@ function HomePage() {
       const resolvedType = typeof nextType === 'function' ? nextType(current) : nextType;
       if (!resolvedType || resolvedType === current) {
         return current;
+      }
+
+      if (resolvedType !== 'REQUEST') {
+        setIsProxyRequestFormOpen(false);
       }
 
       const currentIndex = swipeTabs.findIndex((value) => value === current);
@@ -2846,26 +2981,151 @@ function HomePage() {
     });
   };
 
-  const handleOpenChat = async (deal) => {
+  const handleOpenChat = async (deal, { showError = true } = {}) => {
     if (!token) {
       setIsLoginModalOpen(true);
-      return;
+      return false;
+    }
+
+    if (!hasUsableCampaignId(deal)) {
+      if (showError) {
+        setCampaignError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
+      }
+      return false;
     }
 
     let nextDeal = deal;
     try {
       nextDeal = await refreshMineCampaignsBeforeOpen(deal);
     } catch (error) {
-      setCampaignError(error instanceof Error ? error.message : '團購資料刷新失敗');
+      if (showError) {
+        setCampaignError(error instanceof Error ? error.message : '團購資料刷新失敗');
+      }
     }
 
     if (!canOpenCampaignChat(nextDeal)) {
+      if (showError) {
+        setCampaignError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
+      }
+      return false;
+    }
+
+    const campaignId = getNormalizedCampaignId(nextDeal);
+
+    await markCampaignChatNotificationsAsRead(campaignId);
+    markChatRoomAsRead(campaignId);
+    setChatCampaign(nextDeal);
+    return true;
+  };
+
+  const handleSubmitProxyPurchaseRequest = (event) => {
+    event.preventDefault();
+    setRequestDraftMessage('表單已在前端建立，尚未串接 API。');
+  };
+
+  const handleProxyRequestImageChange = (event) => {
+    const selectedImages = Array.from(event.target.files ?? []);
+    if (selectedImages.length === 0) {
+      event.target.value = '';
       return;
     }
 
-    await markCampaignChatNotificationsAsRead(nextDeal.id);
-    markChatRoomAsRead(nextDeal.id);
-    setChatCampaign(nextDeal);
+    setProxyRequestImages((currentImages) => {
+      const existingImageKeys = new Set(currentImages.map(getProxyRequestImageFileKey));
+      const uniqueSelectedImages = selectedImages.filter(
+        (file) => !existingImageKeys.has(getProxyRequestImageFileKey(file))
+      );
+      const availableSlots = Math.max(0, MAX_PROXY_REQUEST_IMAGES - currentImages.length);
+      const imagesToAdd = uniqueSelectedImages.slice(0, availableSlots);
+
+      if (imagesToAdd.length > 0) {
+        setActiveProxyRequestImageIndex(currentImages.length);
+      }
+
+      if (availableSlots === 0) {
+        setRequestDraftMessage('?????????? 3 ???????????');
+      } else if (selectedImages.length > 0 && uniqueSelectedImages.length === 0) {
+        setRequestDraftMessage('??????????');
+      } else if (uniqueSelectedImages.length > imagesToAdd.length) {
+        setRequestDraftMessage(`?????? 3 ??????? ${imagesToAdd.length} ??`);
+      } else {
+        setRequestDraftMessage('');
+      }
+
+      return [...currentImages, ...imagesToAdd];
+    });
+
+    event.target.value = '';
+  };
+
+  const reorderProxyRequestImages = (fromIndex, toIndex) => {
+    setProxyRequestImages((currentImages) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= currentImages.length ||
+        toIndex >= currentImages.length ||
+        fromIndex === toIndex
+      ) {
+        return currentImages;
+      }
+
+      const nextImages = [...currentImages];
+      const [movedImage] = nextImages.splice(fromIndex, 1);
+      nextImages.splice(toIndex, 0, movedImage);
+      return nextImages;
+    });
+  };
+
+  const removeProxyRequestImage = (targetIndex) => {
+    setProxyRequestImages((currentImages) => currentImages.filter((_, index) => index !== targetIndex));
+    setRequestDraftMessage('');
+    setActiveProxyRequestImageIndex((current) => Math.max(0, current - (targetIndex <= current ? 1 : 0)));
+  };
+
+  const moveProxyRequestPreviewLeft = () => {
+    if (proxyRequestImagePreviews.length <= 1) {
+      return;
+    }
+
+    setActiveProxyRequestImageIndex(
+      (current) => (current - 1 + proxyRequestImagePreviews.length) % proxyRequestImagePreviews.length
+    );
+  };
+
+  const moveProxyRequestPreviewRight = () => {
+    if (proxyRequestImagePreviews.length <= 1) {
+      return;
+    }
+
+    setActiveProxyRequestImageIndex((current) => (current + 1) % proxyRequestImagePreviews.length);
+  };
+
+  const handleProxyRequestPreviewTouchStart = (event) => {
+    event.stopPropagation();
+    proxyRequestPreviewTouchStartXRef.current = event.touches?.[0]?.clientX ?? null;
+  };
+
+  const handleProxyRequestPreviewTouchMove = (event) => {
+    event.stopPropagation();
+  };
+
+  const handleProxyRequestPreviewTouchEnd = (event) => {
+    event.stopPropagation();
+    const startX = proxyRequestPreviewTouchStartXRef.current;
+    const endX = event.changedTouches?.[0]?.clientX ?? null;
+    proxyRequestPreviewTouchStartXRef.current = null;
+
+    if (startX == null || endX == null || Math.abs(endX - startX) < 40) {
+      return;
+    }
+
+    if (endX < startX) {
+      moveProxyRequestPreviewRight();
+      return;
+    }
+
+    moveProxyRequestPreviewLeft();
   };
 
   const handleOpenParticipationFromChat = async (deal) => {
@@ -3770,11 +4030,11 @@ function HomePage() {
     }
   };
 
-  const dealViewModeScope = isDesktopViewport ? (activeType === 'MINE' ? 'mine' : 'market') : 'mobile';
+  const dealViewModeScope = activeType === 'REQUEST' ? 'request' : isDesktopViewport ? (activeType === 'MINE' ? 'mine' : 'market') : 'mobile';
   const defaultDealViewMode =
     isDesktopViewport && activeType === 'MINE' && activeMyCampaignScope === 'ALL' ? 'compact' : 'card';
   const dealViewMode = dealViewModePreferences[dealViewModeScope] || defaultDealViewMode;
-  const isCompactDealList = activeType !== 'REQUEST' && dealViewMode === 'compact';
+  const isCompactDealList = dealViewMode === 'compact';
   const isMineCompactList = activeType === 'MINE' && isCompactDealList;
 
   const handleChangeDealViewMode = (nextMode) => {
@@ -3816,7 +4076,7 @@ function HomePage() {
 
   return (
     <div
-      className="app-shell"
+      className={`app-shell${isProxyRequestFormOpen || isProxyRequestModalOpen ? ' proxy-request-modal-open' : ''}`}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -4049,9 +4309,25 @@ function HomePage() {
       <main className="content">
         <div key={activeType} className={`page-transition page-transition-${pageTransitionDirection}`}>
         {activeType === 'REQUEST' ? (
+          <>
+            <PurchaseRequestsPanel
+              token={token}
+              user={user}
+              keyword={deferredSearch}
+              viewMode={dealViewMode}
+              isCreateOpen={isProxyRequestFormOpen}
+              hideUnavailableRequests={hideFullCampaigns}
+              onCreateOpenChange={setIsProxyRequestFormOpen}
+              onHideUnavailableRequestsChange={setHideFullCampaigns}
+              onModalOpenChange={setIsProxyRequestModalOpen}
+              onRequireLogin={() => setIsLoginModalOpen(true)}
+              onShowToast={({ title, message }) => showSuccessToast(title, message)}
+            />
+          </>
+        ) : activeType === 'REQUEST_DISABLED' ? (
           <section className="request-page-header">
             <p className="eyebrow">發起託購</p>
-            <h2>Coming soon</h2>
+            <h2>建立託購需求</h2>
           </section>
         ) : activeType === 'MINE' ? (
           <section className="mine-page-header">
@@ -4098,11 +4374,266 @@ function HomePage() {
           </div>
         )}
 
-        {activeType === 'REQUEST' ? (
-          <section className="request-coming-soon">
-            <p>託購頁面準備中</p>
-            <span>之後會在這裡建立與管理託購需求。</span>
-          </section>
+        {activeType === 'REQUEST' ? null : activeType === 'REQUEST_DISABLED' ? (
+          <>
+            <section className="request-coming-soon">
+              <h3>託購頁面準備中</h3>
+              <p>點右下角「發起委託」後，會以彈窗開啟託購建單表單。</p>
+            </section>
+
+            {isProxyRequestFormOpen && (
+              <div className="modal-backdrop" onClick={() => setIsProxyRequestFormOpen(false)}>
+                <div className="login-modal create-campaign-modal proxy-request-modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="modal-top-row">
+                    <p className="eyebrow">託購建單</p>
+                    <button type="button" className="modal-close" onClick={() => setIsProxyRequestFormOpen(false)}>
+                      關閉
+                    </button>
+                  </div>
+                  <h2 className="modal-title">發起委託</h2>
+                  <form className="proxy-request-form" onSubmit={handleSubmitProxyPurchaseRequest}>
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>一</span>
+                <div>
+                  <h3>商品資訊</h3>
+                  <p>填寫想委託代購的商品內容。</p>
+                </div>
+              </div>
+
+              <label className="form-field">
+                <span>商品名稱 *</span>
+                <input type="text" name="productName" placeholder="例：好市多衛生紙" required />
+              </label>
+
+              <label className="form-field">
+                <span>商品分類 *</span>
+                <select name="category" required defaultValue="">
+                  <option value="" disabled>
+                    請選擇分類
+                  </option>
+                  <option value="fresh">生鮮</option>
+                  <option value="daily">日用品</option>
+                  <option value="drink">飲料</option>
+                  <option value="other">其他</option>
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>商品圖片（可選）</span>
+                <input type="file" name="images" accept="image/*" multiple />
+                <small>最多 1～3 張</small>
+              </label>
+
+              <label className="form-field">
+                <span>商品備註（可選）</span>
+                <textarea name="note" rows="3" placeholder="例：指定品牌 / 包裝 / 規格" />
+              </label>
+            </section>
+
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>二</span>
+                <div>
+                  <h3>報酬設定（幫買費）</h3>
+                  <p>設定代購者可取得的幫買報酬。</p>
+                </div>
+              </div>
+
+              <fieldset className="option-group">
+                <legend>幫買報酬方式 *</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="rewardMethod"
+                    value="fixed"
+                    checked={requestRewardMethod === 'fixed'}
+                    onChange={(event) => setRequestRewardMethod(event.target.value)}
+                  />
+                  固定報酬
+                </label>
+                {requestRewardMethod === 'fixed' && (
+                  <label className="form-field nested-field">
+                    <span>報酬金額 *</span>
+                    <input type="number" min="0" inputMode="numeric" placeholder="元" required />
+                  </label>
+                )}
+                <label>
+                  <input
+                    type="radio"
+                    name="rewardMethod"
+                    value="quote"
+                    checked={requestRewardMethod === 'quote'}
+                    onChange={(event) => setRequestRewardMethod(event.target.value)}
+                  />
+                  由代購者報價（可議價）
+                </label>
+                <p className="field-hint">商品費用由代購者先行支付，交貨時另行結算。</p>
+              </fieldset>
+            </section>
+
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>三</span>
+                <div>
+                  <h3>收貨方式</h3>
+                  <p>依選擇顯示對應資訊欄位。</p>
+                </div>
+              </div>
+
+              <fieldset className="option-group">
+                <legend>收貨方式 *</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="deliveryMethod"
+                    value="meetup"
+                    checked={requestDeliveryMethod === 'meetup'}
+                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
+                  />
+                  面交
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="deliveryMethod"
+                    value="store"
+                    checked={requestDeliveryMethod === 'store'}
+                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
+                  />
+                  店到店（超商）
+                </label>
+                {requestDeliveryMethod === 'store' && (
+                  <label className="form-field nested-field">
+                    <span>超商 / 門市資訊 *</span>
+                    <input type="text" placeholder="例：7-11 中和門市" required />
+                  </label>
+                )}
+                <label>
+                  <input
+                    type="radio"
+                    name="deliveryMethod"
+                    value="home"
+                    checked={requestDeliveryMethod === 'home'}
+                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
+                  />
+                  宅配
+                </label>
+                {requestDeliveryMethod === 'home' && (
+                  <label className="form-field nested-field">
+                    <span>收件地址 *</span>
+                    <textarea rows="3" placeholder="請輸入完整收件地址" required />
+                  </label>
+                )}
+              </fieldset>
+            </section>
+
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>四</span>
+                <div>
+                  <h3>交貨時間（代購完成時間）</h3>
+                  <p>設定希望代購完成的時間。</p>
+                </div>
+              </div>
+
+              <fieldset className="option-group">
+                <legend>交貨時間 *</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="completionTimeMode"
+                    value="specific"
+                    checked={requestCompletionTimeMode === 'specific'}
+                    onChange={(event) => setRequestCompletionTimeMode(event.target.value)}
+                  />
+                  指定時間
+                </label>
+                {requestCompletionTimeMode === 'specific' && (
+                  <label className="form-field nested-field">
+                    <span>日期 + 時間 *</span>
+                    <input type="datetime-local" required />
+                  </label>
+                )}
+                <label>
+                  <input
+                    type="radio"
+                    name="completionTimeMode"
+                    value="flexible"
+                    checked={requestCompletionTimeMode === 'flexible'}
+                    onChange={(event) => setRequestCompletionTimeMode(event.target.value)}
+                  />
+                  時間可協調
+                </label>
+              </fieldset>
+            </section>
+
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>五</span>
+                <div>
+                  <h3>委託期限（接單期限）</h3>
+                  <p>設定代購者可接單的期限。</p>
+                </div>
+              </div>
+
+              <fieldset className="option-group">
+                <legend>委託期限 *</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="deadlineMode"
+                    value="specific"
+                    checked={requestDeadlineMode === 'specific'}
+                    onChange={(event) => setRequestDeadlineMode(event.target.value)}
+                  />
+                  指定截止時間
+                </label>
+                {requestDeadlineMode === 'specific' && (
+                  <label className="form-field nested-field">
+                    <span>日期 + 時間 *</span>
+                    <input type="datetime-local" required />
+                  </label>
+                )}
+                <label>
+                  <input
+                    type="radio"
+                    name="deadlineMode"
+                    value="longTerm"
+                    checked={requestDeadlineMode === 'longTerm'}
+                    onChange={(event) => setRequestDeadlineMode(event.target.value)}
+                  />
+                  長期有效（直到有人接單）
+                </label>
+              </fieldset>
+            </section>
+
+            <section className="proxy-request-section">
+              <div className="proxy-request-section-title">
+                <span>六</span>
+                <div>
+                  <h3>進階條件（可選）</h3>
+                  <p>限制接單者條件。</p>
+                </div>
+              </div>
+
+              <label className="form-field">
+                <span>限制接單者條件（可選）</span>
+                <textarea rows="3" placeholder="例：信用分數 80 以上 / 有好市多會員 / 可今日交貨" />
+              </label>
+            </section>
+
+            <div className="proxy-request-submit-row">
+              {requestDraftMessage && <p className="status-message">{requestDraftMessage}</p>}
+              <button type="submit" className="create-button active">
+                發起委託
+              </button>
+            </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </>
         ) : activeType === 'MINE' ? (
           <div className="mine-filter-stack">
             <section className="category-strip">
@@ -4275,9 +4806,28 @@ function HomePage() {
         </div>
       </main>
 
-      {activeType !== 'REQUEST' && !isSearchExpanded && renderFloatingDealViewControl()}
+      {!isSearchExpanded && renderFloatingDealViewControl()}
 
-      <footer className={isSearchExpanded ? 'bottom-bar search-expanded' : 'bottom-bar'}>
+      <footer
+        className={[
+          'bottom-bar',
+          isSearchExpanded ? 'search-expanded' : '',
+          activeType === 'REQUEST' ? 'request-mode' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <button
+          type="button"
+          className="create-button profile-nav-icon-button"
+          onClick={() => switchActiveType('MINE')}
+          aria-label="我的團購"
+          title="我的團購"
+        >
+          <span className="profile-nav-icon-frame">
+            <MyDealsIcon />
+          </span>
+        </button>
         <label
           className="search-box"
           onClick={() => {
@@ -4303,17 +4853,39 @@ function HomePage() {
         </label>
         {activeType === 'REQUEST' ? (
           <>
-            <button type="button" className="create-button" onClick={() => switchActiveType('SCHEDULED')}>
-              團購
+            <button
+              type="button"
+              className="create-button group-buy-icon-button"
+              onClick={() => switchActiveType('SCHEDULED')}
+              aria-label="團購"
+              title="團購"
+            >
+              <span className="group-buy-icon-frame">
+                <img src={groupBuyIconSrc} alt="" />
+              </span>
             </button>
-            <button type="button" className="create-button request-button active" onClick={() => switchActiveType('REQUEST')}>
-              建立託購
+            <button
+              type="button"
+              className="create-button request-button request-create-button active"
+              onClick={() => setIsProxyRequestFormOpen(true)}
+              aria-label="發起委託"
+              title="發起委託"
+            >
+              發起委託
             </button>
           </>
         ) : (
           <>
-            <button type="button" className="create-button request-button" onClick={() => switchActiveType('REQUEST')}>
-              託購
+            <button
+              type="button"
+              className="create-button request-button request-icon-button"
+              onClick={() => switchActiveType('REQUEST')}
+              aria-label="託購"
+              title="託購"
+            >
+              <span className="request-icon-frame">
+                <img src={proxyPurchaseIconSrc} alt="" />
+              </span>
             </button>
             <button
               type="button"

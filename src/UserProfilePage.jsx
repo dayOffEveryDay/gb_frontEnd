@@ -79,10 +79,12 @@ function normalizeFollowingUser(user) {
 
 function normalizeCreditScoreLog(log) {
   return {
-    id: log?.id ?? `${log?.campaignId ?? 'credit'}-${log?.createdAt ?? log?.reason ?? 'log'}`,
+    id: log?.id ?? `${log?.campaignId ?? log?.purchaseRequestId ?? 'credit'}-${log?.createdAt ?? log?.reason ?? 'log'}`,
     scoreChange: log?.scoreChange ?? log?.score_change ?? null,
     reason: log?.reason ?? '--',
     campaignId: log?.campaignId ?? log?.campaign_id ?? null,
+    purchaseRequestId: log?.purchaseRequestId ?? log?.purchase_request_id ?? null,
+    sourceType: log?.sourceType ?? log?.source_type ?? '',
     createdAt: log?.createdAt ?? log?.created_at ?? '',
   };
 }
@@ -405,6 +407,20 @@ function UserProfilePage() {
     });
   };
 
+  const handleOpenCreditScorePurchaseRequest = (purchaseRequestId) => {
+    if (purchaseRequestId == null) {
+      return;
+    }
+
+    navigate('/', {
+      state: {
+        activeType: 'REQUEST',
+        focusPurchaseRequestId: String(purchaseRequestId),
+        source: 'credit-score-log',
+      },
+    });
+  };
+
   const toggleReceivedReview = (reviewId) => {
     setExpandedReceivedReviewIds((current) => ({
       ...current,
@@ -613,6 +629,17 @@ function UserProfilePage() {
                 title="前往團購單"
               >
                 <OpenCardIcon />
+              </button>
+            )}
+            {log.purchaseRequestId != null && (
+              <button
+                type="button"
+                className="credit-score-campaign-button"
+                onClick={() => handleOpenCreditScorePurchaseRequest(log.purchaseRequestId)}
+                aria-label={`前往託購單 ${log.purchaseRequestId}`}
+                title="前往託購單"
+              >
+                託購
               </button>
             )}
           </article>

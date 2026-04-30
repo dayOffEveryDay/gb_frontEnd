@@ -9,6 +9,31 @@ const COMPLETED_CHAT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const COMPLETED_CHAT_NOTICE = '團購已完成 聊天室將在3天後終止連線';
 const CHAT_IMAGE_URL_PATTERN = /(?:https?:\/\/[^\s]+|\/uploads\/[^\s]+|\buploads\/[^\s]+)/gi;
 const CHAT_IMAGE_EXTENSION_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|webp)(?:[?#].*)?$/i;
+const CHAT_ROOM_UNAVAILABLE_MESSAGE = '這筆聊天室資料異常或已不存在，暫時無法開啟。';
+
+function isUsableCampaignId(campaignId) {
+  if (campaignId == null) {
+    return false;
+  }
+
+  const campaignIdText = String(campaignId).trim();
+  if (!campaignIdText) {
+    return false;
+  }
+
+  const normalizedCampaignId = Number(campaignIdText);
+  return Number.isInteger(normalizedCampaignId) && normalizedCampaignId > 0;
+}
+
+function getSafeChatErrorMessage(error, fallbackMessage = '聊天室暫時無法載入，請稍後再試。') {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+
+  if (/For input string|NumberFormatException|anonymousUser/i.test(message)) {
+    return CHAT_ROOM_UNAVAILABLE_MESSAGE;
+  }
+
+  return message || fallbackMessage;
+}
 
 function getCampaignStatus(campaign) {
   return (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? '').toString().toUpperCase();
@@ -295,7 +320,13 @@ function CampaignChatModal({
   }, [shouldStopChat]);
 
   useEffect(() => {
-    if (!isOpen || !campaignId || !token) {
+    if (!isOpen || !token) {
+      return undefined;
+    }
+
+    if (!isUsableCampaignId(campaignId)) {
+      setError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
+      setMessages([]);
       return undefined;
     }
 
@@ -323,7 +354,7 @@ function CampaignChatModal({
             return;
           }
 
-          setError(nextError.message);
+          setError(getSafeChatErrorMessage(nextError));
           setMessages([]);
         }
       });
@@ -334,7 +365,7 @@ function CampaignChatModal({
   }, [campaignId, isOpen, onMarkRead, shouldStopChat, token]);
 
   useEffect(() => {
-    if (!isOpen || !campaignId || !token) {
+    if (!isOpen || !token || !isUsableCampaignId(campaignId)) {
       return undefined;
     }
 
@@ -403,7 +434,7 @@ function CampaignChatModal({
               return;
             }
 
-            setError(frame.headers.message || '聊天室連線發生錯誤');
+            setError(getSafeChatErrorMessage(frame.headers.message, '聊天室連線發生錯誤'));
           },
           onWebSocketClose: () => {
             setIsConnected(false);
@@ -413,7 +444,7 @@ function CampaignChatModal({
         client.activate();
         clientRef.current = client;
       } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : '聊天室初始化失敗');
+        setError(getSafeChatErrorMessage(nextError, '聊天室初始化失敗'));
       }
     };
 

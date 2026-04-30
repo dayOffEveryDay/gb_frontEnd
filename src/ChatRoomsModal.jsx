@@ -97,11 +97,10 @@ function ChatRoomsModal({
         <div className="chat-room-list">
           {isLoading && <p className="muted-copy">載入聊天室中...</p>}
           {!isLoading && error && <p className="inline-error">{error}</p>}
-          {!isLoading && !error && chatRooms.length === 0 && (
+          {!isLoading && chatRooms.length === 0 && !error && (
             <p className="muted-copy">目前沒有可進入的聊天室。</p>
           )}
           {!isLoading &&
-            !error &&
             chatRooms.map((room) => {
               const timeLabel = formatChatRoomTime(getChatRoomTime(room));
               const unreadCount = Number(room?.unreadMessageCount ?? 0);
