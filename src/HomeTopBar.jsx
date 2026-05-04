@@ -1,20 +1,49 @@
-import { AvatarIcon, BellIcon, ChatRoomsIcon, LandmarkIcon, RefreshIcon } from './Icons';
+import { useMemo, useState } from 'react';
+import { AvatarIcon, BellIcon, ChatRoomsIcon, RefreshIcon } from './Icons';
 
 function HomeTopBar({
   labels,
   token,
   user,
   stores,
-  activeStore,
+  activeStoreIds = [],
   chatUnreadRoomCount = 0,
   unreadCount = 0,
-  onChangeStore,
+  onChangeStores,
   onOpenProfile,
   onOpenChatRooms,
   onOpenNotifications,
   onRefresh,
   isRefreshing,
 }) {
+  const [isStoreMenuOpen, setIsStoreMenuOpen] = useState(false);
+  const selectedStoreIds = useMemo(() => activeStoreIds.map((id) => Number(id)).filter(Boolean), [activeStoreIds]);
+  const selectedStoreIdSet = useMemo(() => new Set(selectedStoreIds), [selectedStoreIds]);
+  const storeLabel = useMemo(() => {
+    if (selectedStoreIds.length === 0) {
+      return labels.all;
+    }
+
+    if (selectedStoreIds.length === 1) {
+      return stores.find((store) => Number(store.id) === selectedStoreIds[0])?.name ?? labels.all;
+    }
+
+    return `${selectedStoreIds.length} 間`;
+  }, [labels.all, selectedStoreIds, stores]);
+
+  const toggleStore = (storeId) => {
+    const normalizedStoreId = Number(storeId);
+    if (!normalizedStoreId) {
+      onChangeStores?.([]);
+      return;
+    }
+
+    const nextIds = selectedStoreIdSet.has(normalizedStoreId)
+      ? selectedStoreIds.filter((id) => id !== normalizedStoreId)
+      : [...selectedStoreIds, normalizedStoreId];
+    onChangeStores?.(nextIds);
+  };
+
   return (
     <header className={token ? 'topbar' : 'topbar guest-topbar'}>
       <button
@@ -33,19 +62,46 @@ function HomeTopBar({
         {!token && <span className="login-chip-label">{labels.login}</span>}
       </button>
 
-      <div className="store-selector">
-        <span className="selector-label">
-          <LandmarkIcon />
-          {labels.currentStore}
-        </span>
-        <select value={activeStore} onChange={(event) => onChangeStore(Number(event.target.value))}>
-          <option value={0}>{labels.all}</option>
-          {stores.map((store) => (
-            <option key={store.id} value={store.id}>
-              {store.name}
-            </option>
-          ))}
-        </select>
+      <div
+        className="store-selector"
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setIsStoreMenuOpen(false);
+          }
+        }}
+      >
+        <button
+          type="button"
+          className="store-selector-trigger"
+          onClick={() => setIsStoreMenuOpen((current) => !current)}
+          aria-haspopup="listbox"
+          aria-expanded={isStoreMenuOpen}
+        >
+          <span className="selector-label">{labels.currentStore}</span>
+          <span className="store-selector-value">{storeLabel}</span>
+          <span className="store-selector-chevron" aria-hidden="true"></span>
+        </button>
+        {isStoreMenuOpen && (
+          <div className="store-selector-menu" role="listbox" aria-label="門市">
+            <label className="store-selector-option">
+              <input type="checkbox" checked={selectedStoreIds.length === 0} onChange={() => onChangeStores?.([])} />
+              <span>{labels.all}</span>
+            </label>
+            {stores.map((store) => {
+              const storeId = Number(store.id);
+              return (
+                <label key={store.id} className="store-selector-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedStoreIdSet.has(storeId)}
+                    onChange={() => toggleStore(storeId)}
+                  />
+                  <span>{store.name}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="topbar-actions">

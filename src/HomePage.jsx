@@ -77,7 +77,6 @@ import {
   CardViewIcon,
   CompactViewIcon,
   DiagonalExpandIcon,
-  MyDealsIcon,
   SearchIcon,
 } from './Icons';
 
@@ -1043,7 +1042,7 @@ function HomePage() {
   const [activeMarketStatus, setActiveMarketStatus] = useState('ALL');
   const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
   const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
-  const [activeStore, setActiveStore] = useState(0);
+  const [activeStoreIds, setActiveStoreIds] = useState([]);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const [campaigns, setCampaigns] = useState([]);
@@ -1206,9 +1205,6 @@ function HomePage() {
     () => chatRooms.reduce((count, room) => count + (Number(room?.unreadMessageCount ?? 0) > 0 ? 1 : 0), 0),
     [chatRooms]
   );
-  const groupBuyIconSrc = themeMode === 'dark' ? '/icons/Groip_Buy_W-256.png' : '/icons/Groip_Buy_B-256.png';
-  const proxyPurchaseIconSrc =
-    themeMode === 'dark' ? '/icons/proxy-purchase-request-w.png' : '/icons/proxy-purchase-request-b.png';
   const proxyRequestImagePreviews = useMemo(
     () =>
       proxyRequestImages.map((file) => ({
@@ -1395,8 +1391,10 @@ function HomePage() {
         if (typeof context.ui.hideFullCampaigns === 'boolean') {
           setHideFullCampaigns(context.ui.hideFullCampaigns);
         }
-        if (typeof context.ui.activeStore === 'number') {
-          setActiveStore(context.ui.activeStore);
+        if (Array.isArray(context.ui.activeStoreIds)) {
+          setActiveStoreIds(context.ui.activeStoreIds.map((id) => Number(id)).filter(Boolean));
+        } else if (typeof context.ui.activeStore === 'number' && context.ui.activeStore) {
+          setActiveStoreIds([context.ui.activeStore]);
         }
         if (context.ui.activeMyCampaignFilter) {
           setActiveMyCampaignFilter(context.ui.activeMyCampaignFilter);
@@ -1726,6 +1724,44 @@ function HomePage() {
     };
   }, []);
 
+  const fetchCampaignsForSelectedStores = useCallback(
+    async (query) => {
+      const selectedStoreIds = activeStoreIds.map((id) => Number(id)).filter(Boolean);
+      if (selectedStoreIds.length <= 1) {
+        return fetchCampaigns({
+          ...query,
+          storeId: selectedStoreIds[0] || undefined,
+        });
+      }
+
+      const pages = await Promise.all(
+        selectedStoreIds.map((storeId) =>
+          fetchCampaigns({
+            ...query,
+            storeId,
+          })
+        )
+      );
+      const seenIds = new Set();
+      const content = pages
+        .flatMap((pageData) => (Array.isArray(pageData?.content) ? pageData.content : []))
+        .filter((item) => {
+          const itemId = String(item?.id ?? item?.campaignId ?? item?.campaign_id ?? '');
+          if (!itemId || seenIds.has(itemId)) {
+            return false;
+          }
+          seenIds.add(itemId);
+          return true;
+        });
+
+      return {
+        content,
+        last: pages.every((pageData) => Boolean(pageData?.last)),
+      };
+    },
+    [activeStoreIds]
+  );
+
   const loadCampaignPage = useCallback(
     async ({ silent = false } = {}) => {
       if (!silent) {
@@ -1775,10 +1811,9 @@ function HomePage() {
           return;
         }
 
-        const data = await fetchCampaigns({
+        const data = await fetchCampaignsForSelectedStores({
           page: 0,
           size: PAGE_SIZE,
-          storeId: activeStore || undefined,
           categoryId: activeCategory || undefined,
           keyword: deferredSearch.trim() || undefined,
         });
@@ -1805,7 +1840,7 @@ function HomePage() {
         }
       }
     },
-    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeStore, activeType, deferredSearch, hideFullCampaigns, token]
+    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeType, deferredSearch, fetchCampaignsForSelectedStores, hideFullCampaigns, token]
   );
 
   useEffect(() => {
@@ -1866,10 +1901,9 @@ function HomePage() {
 
         setIsLoadingMore(true);
 
-        fetchCampaigns({
+        fetchCampaignsForSelectedStores({
           page: page + 1,
           size: PAGE_SIZE,
-          storeId: activeStore || undefined,
           categoryId: activeCategory || undefined,
           keyword: deferredSearch.trim() || undefined,
         })
@@ -1897,7 +1931,7 @@ function HomePage() {
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [activeCategory, activeStore, activeType, campaigns.length, deferredSearch, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
+  }, [activeCategory, activeType, campaigns.length, deferredSearch, fetchCampaignsForSelectedStores, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
 
   const openProfile = () => {
     setAuthError('');
@@ -2316,6 +2350,12 @@ function HomePage() {
       expirePreset: scenarioType === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m',
     }));
     setIsCreateCampaignOpen(true);
+  };
+
+  const handleOpenCreateCampaignForCurrentType = () => {
+    const currentScenarioType = activeType === 'INSTANT' || activeType === 'SCHEDULED' ? activeType : 'SCHEDULED';
+    switchActiveType(currentScenarioType);
+    handleOpenCreateCampaign(currentScenarioType);
   };
 
   const refreshHome = useCallback(() => {
@@ -2965,7 +3005,7 @@ function HomePage() {
           activeType,
           activeCategory,
           hideFullCampaigns,
-          activeStore,
+          activeStoreIds,
           activeMyCampaignScope,
           activeMyCampaignFilter,
           search,
@@ -4094,10 +4134,10 @@ function HomePage() {
         token={token}
         user={user}
         stores={stores}
-        activeStore={activeStore}
+        activeStoreIds={activeStoreIds}
         chatUnreadRoomCount={chatUnreadRoomCount}
         unreadCount={notifications.length}
-        onChangeStore={setActiveStore}
+        onChangeStores={setActiveStoreIds}
         onOpenProfile={openProfile}
         onOpenChatRooms={handleOpenChatRooms}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
@@ -4819,14 +4859,12 @@ function HomePage() {
       >
         <button
           type="button"
-          className="create-button profile-nav-icon-button"
+          className={activeType === 'MINE' ? 'create-button bottom-nav-button active' : 'create-button bottom-nav-button'}
           onClick={() => switchActiveType('MINE')}
           aria-label="我的團購"
           title="我的團購"
         >
-          <span className="profile-nav-icon-frame">
-            <MyDealsIcon />
-          </span>
+          我的
         </button>
         <label
           className="search-box"
@@ -4851,18 +4889,37 @@ function HomePage() {
             }}
           />
         </label>
-        {activeType === 'REQUEST' ? (
+        {activeType === 'MINE' ? (
           <>
             <button
               type="button"
-              className="create-button group-buy-icon-button"
+              className="create-button bottom-nav-button"
               onClick={() => switchActiveType('SCHEDULED')}
-              aria-label="團購"
-              title="團購"
+              aria-label="合購"
+              title="合購"
             >
-              <span className="group-buy-icon-frame">
-                <img src={groupBuyIconSrc} alt="" />
-              </span>
+              合購
+            </button>
+            <button
+              type="button"
+              className="create-button bottom-nav-button request-button"
+              onClick={() => switchActiveType('REQUEST')}
+              aria-label="託購"
+              title="託購"
+            >
+              託購
+            </button>
+          </>
+        ) : activeType === 'REQUEST' ? (
+          <>
+            <button
+              type="button"
+              className="create-button bottom-nav-button"
+              onClick={() => switchActiveType('SCHEDULED')}
+              aria-label="合購"
+              title="合購"
+            >
+              合購
             </button>
             <button
               type="button"
@@ -4878,22 +4935,17 @@ function HomePage() {
           <>
             <button
               type="button"
-              className="create-button request-button request-icon-button"
+              className="create-button bottom-nav-button request-button"
               onClick={() => switchActiveType('REQUEST')}
               aria-label="託購"
               title="託購"
             >
-              <span className="request-icon-frame">
-                <img src={proxyPurchaseIconSrc} alt="" />
-              </span>
+              託購
             </button>
             <button
               type="button"
               className="create-button active"
-              onClick={() => {
-                switchActiveType('SCHEDULED');
-                handleOpenCreateCampaign('SCHEDULED');
-              }}
+              onClick={handleOpenCreateCampaignForCurrentType}
             >
               開團
             </button>

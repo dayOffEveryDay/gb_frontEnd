@@ -213,24 +213,24 @@ function DealCard({
             )}
           </div>
         </div>
+        {hasJoinAction && (
+          <div className="deal-actions">
+            <button
+              type="button"
+              className="join-campaign-button"
+              aria-label={labels.joinCampaign}
+              title={labels.joinCampaign}
+              onClick={(event) => {
+                event.stopPropagation();
+                onJoin(deal);
+              }}
+            >
+              <span className="join-campaign-symbol">{'\u52a0\u5165'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {hasJoinAction && (
-        <div className="deal-actions">
-          <button
-            type="button"
-            className="join-campaign-button"
-            aria-label={labels.joinCampaign}
-            title={labels.joinCampaign}
-            onClick={(event) => {
-              event.stopPropagation();
-              onJoin(deal);
-            }}
-          >
-            <span className="join-campaign-symbol" aria-hidden="true">+1</span>
-          </button>
-        </div>
-      )}
     </article>
   );
 }
