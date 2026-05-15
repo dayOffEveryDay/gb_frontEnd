@@ -41,6 +41,7 @@ import {
   withdrawCampaign,
   updateCurrentUserProfile,
 } from './api';
+import { hasCompletedOnboarding } from './onboardingUtils';
 import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
 import {
   formatCountdown,
@@ -1269,6 +1270,12 @@ function HomePage() {
     },
     []
   );
+
+  useEffect(() => {
+    if (user?.id && !hasCompletedOnboarding(user.id)) {
+      navigate('/onboarding/setup', { replace: true });
+    }
+  }, [navigate, user?.id]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;

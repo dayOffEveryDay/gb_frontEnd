@@ -795,10 +795,6 @@ function UserProfilePage() {
               />
             </label>
 
-            <button type="button" className="save-button" onClick={handleSaveProfile} disabled={isSavingProfile}>
-              {isSavingProfile ? '儲存中...' : '儲存'}
-            </button>
-
             <button
               type="button"
               className="text-button theme-toggle"
@@ -806,6 +802,14 @@ function UserProfilePage() {
             >
               <BulbIcon />
               <span>主題: {themeMode === 'dark' ? 'Dark' : 'Light'}</span>
+            </button>
+
+            <button type="button" className="save-button" onClick={handleSaveProfile} disabled={isSavingProfile}>
+              {isSavingProfile ? '儲存中...' : '儲存'}
+            </button>
+
+            <button type="button" className="secondary-button" onClick={() => navigate('/guide')}>
+              查看新手導覽
             </button>
 
             <button type="button" className="secondary-button" onClick={handleLogout}>
@@ -973,7 +977,8 @@ function UserProfilePage() {
           </section>
         )}
 
-        <section className="user-profile-section">
+        {!isSelf && (
+          <section className="user-profile-section">
           <div className="user-profile-section-heading">
             <h2>目前開團</h2>
             <span>{profile.activeCampaigns.length} 筆</span>
@@ -1001,7 +1006,8 @@ function UserProfilePage() {
               </article>
             ))}
           </div>
-        </section>
+          </section>
+        )}
 
         {isSelf && <p className="panel-note">這裡整合了你的個人資料、帳號設定、追蹤清單與封鎖清單。</p>}
         {statusMessage && <p className="inline-warning">{statusMessage}</p>}
