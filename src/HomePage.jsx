@@ -72,7 +72,7 @@ import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
-import PurchaseRequestsPanel from './PurchaseRequestsPanel';
+import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './PurchaseRequestsPanel';
 import {
   AvatarIcon,
   CardViewIcon,
@@ -993,8 +993,12 @@ function HomePage() {
   const swipeTabs = ['MINE', ...TYPE_OPTIONS.map((option) => option.value), 'REQUEST'];
   const localizedMyCampaignScopes = [
     { value: 'ALL', label: '全部' },
-    { value: 'HOSTED', label: '我的團購' },
+    { value: 'HOSTED', label: '我發起的' },
     { value: 'JOINED', label: '我參加的' },
+  ];
+  const localizedMineDomains = [
+    { value: 'CAMPAIGN', label: '我的團購' },
+    { value: 'REQUEST', label: '我的託購' },
   ];
   const localizedMyCampaignOptions = [
     { value: 'ALL', label: '全部' },
@@ -1041,6 +1045,7 @@ function HomePage() {
   const [activeCategory, setActiveCategory] = useState(0);
   const [hideFullCampaigns, setHideFullCampaigns] = useState(getInitialMarketHideFullEnabled);
   const [activeMarketStatus, setActiveMarketStatus] = useState('ALL');
+  const [activeMineDomain, setActiveMineDomain] = useState('CAMPAIGN');
   const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
   const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
   const [activeStoreIds, setActiveStoreIds] = useState([]);
@@ -1785,6 +1790,13 @@ function HomePage() {
         }
 
         if (activeType === 'MINE') {
+          if (activeMineDomain === 'REQUEST') {
+            setCampaigns([]);
+            setPage(0);
+            setHasMore(false);
+            return;
+          }
+
           const mineQuery = {
             page: 0,
             size: PAGE_SIZE,
@@ -1847,7 +1859,17 @@ function HomePage() {
         }
       }
     },
-    [activeCategory, activeMyCampaignFilter, activeMyCampaignScope, activeType, deferredSearch, fetchCampaignsForSelectedStores, hideFullCampaigns, token]
+    [
+      activeCategory,
+      activeMineDomain,
+      activeMyCampaignFilter,
+      activeMyCampaignScope,
+      activeType,
+      deferredSearch,
+      fetchCampaignsForSelectedStores,
+      hideFullCampaigns,
+      token,
+    ]
   );
 
   useEffect(() => {
@@ -4378,7 +4400,20 @@ function HomePage() {
           </section>
         ) : activeType === 'MINE' ? (
           <section className="mine-page-header">
-            <p className="eyebrow">我的團購</p>
+            <div className="mine-domain-switch" role="tablist" aria-label="我的分類">
+              {localizedMineDomains.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={activeMineDomain === option.value ? 'active' : ''}
+                  role="tab"
+                  aria-selected={activeMineDomain === option.value}
+                  onClick={() => setActiveMineDomain(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <div className="type-switch-shell desktop-mine-type-switch">
               <section className="type-switch">
                 <button type="button" className="mode-button active desktop-only-mode" onClick={() => switchActiveType('MINE')}>
@@ -4683,43 +4718,47 @@ function HomePage() {
           </>
         ) : activeType === 'MINE' ? (
           <div className="mine-filter-stack">
-            <section className="category-strip">
-              {localizedMyCampaignScopes.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={activeMyCampaignScope === option.value ? 'category-button active' : 'category-button'}
-                  onClick={() => setActiveMyCampaignScope(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </section>
-            <section className="mine-status-inline-filter">
-              <span className="mine-status-filter-label">狀態</span>
-              <div className="mine-status-filter-options">
-                {localizedMyCampaignOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={activeMyCampaignFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
-                    onClick={() => setActiveMyCampaignFilter(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </section>
-            <label className="mine-status-filter">
-              <span className="mine-status-filter-label">狀態</span>
-              <select value={activeMyCampaignFilter} onChange={(event) => setActiveMyCampaignFilter(event.target.value)}>
-                {localizedMyCampaignOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {activeMineDomain === 'CAMPAIGN' && (
+              <>
+                <section className="category-strip">
+                  {localizedMyCampaignScopes.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={activeMyCampaignScope === option.value ? 'category-button active' : 'category-button'}
+                      onClick={() => setActiveMyCampaignScope(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </section>
+                <section className="mine-status-inline-filter">
+                  <span className="mine-status-filter-label">狀態</span>
+                  <div className="mine-status-filter-options">
+                    {localizedMyCampaignOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={activeMyCampaignFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
+                        onClick={() => setActiveMyCampaignFilter(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+                <label className="mine-status-filter">
+                  <span className="mine-status-filter-label">狀態</span>
+                  <select value={activeMyCampaignFilter} onChange={(event) => setActiveMyCampaignFilter(event.target.value)}>
+                    {localizedMyCampaignOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
           </div>
         ) : (
           <div className="market-filter-row">
@@ -4755,7 +4794,24 @@ function HomePage() {
           </div>
         )}
 
-        {activeType !== 'REQUEST' && (
+        {activeType === 'MINE' && activeMineDomain === 'REQUEST' ? (
+          <PurchaseRequestsPanel
+            token={token}
+            user={user}
+            keyword={deferredSearch}
+            viewMode={dealViewMode}
+            isCreateOpen={false}
+            initialScope="MY_ALL"
+            scopeOptions={MY_PURCHASE_REQUEST_SCOPE_OPTIONS}
+            scopeControl="tabs"
+            showHideUnavailableToggle={false}
+            hideUnavailableRequests={false}
+            onCreateOpenChange={() => {}}
+            onModalOpenChange={setIsProxyRequestModalOpen}
+            onRequireLogin={() => setIsLoginModalOpen(true)}
+            onShowToast={({ title, message }) => showSuccessToast(title, message)}
+          />
+        ) : activeType !== 'REQUEST' && (
           <>
             <section
               className={[

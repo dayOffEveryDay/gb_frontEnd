@@ -2177,12 +2177,46 @@
 
 .mine-page-header {
   display: grid;
-  gap: 6px;
   margin-bottom: 16px;
-  padding: 14px 16px;
+  padding: 5px;
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: 18px;
   background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+}
+
+.mine-domain-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.mine-domain-switch button {
+  min-width: 0;
+  min-height: 39px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mine-domain-switch button.active {
+  border-color: color-mix(in srgb, var(--primary) 62%, var(--line));
+  background: var(--primary);
+  color: #fff;
+}
+
+.mine-domain-switch button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
 }
 
 .request-page-header,
@@ -3992,9 +4026,9 @@
   bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   width: auto;
   max-width: none;
-  padding: 10px;
+  padding: 7px;
   border: 1px solid var(--line);
-  border-radius: 20px;
+  border-radius: 17px;
   background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
   backdrop-filter: blur(18px);
   box-shadow: 0 18px 40px rgba(8, 16, 32, 0.18);
@@ -4022,8 +4056,8 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 14px;
-  border-radius: 16px;
+  padding: 9px 14px;
+  border-radius: 13px;
   background: var(--surface);
   border: 1px solid var(--line-soft);
   cursor: text;
@@ -4072,8 +4106,8 @@
 .create-button {
   min-width: 0;
   width: 100%;
-  padding: 12px 14px;
-  border-radius: 16px;
+  padding: 9px 14px;
+  border-radius: 13px;
   background: var(--accent);
   color: #fff;
   font-weight: 800;
@@ -4090,10 +4124,10 @@
   justify-content: center;
   min-width: 0;
   width: 100%;
-  min-height: 48px;
-  padding: 12px 10px;
+  min-height: 36px;
+  padding: 9px 10px;
   border: 1px solid var(--line-soft);
-  border-radius: 16px;
+  border-radius: 13px;
   background: var(--surface);
   color: var(--ink-soft);
   box-shadow: none;
@@ -4122,7 +4156,7 @@
 :root[data-theme='dark'] .bottom-nav-button.active {
   border-color: var(--primary);
   background: var(--primary);
-  color: #09111f;
+  color: #fff;
 }
 
 .bottom-nav-button:hover,
@@ -6153,12 +6187,18 @@
   }
 
   .mine-page-header {
-    padding: 12px 14px;
-    gap: 4px;
+    padding: 4px;
   }
 
-  .mine-page-header h2 {
-    font-size: 20px;
+  .mine-domain-switch {
+    gap: 5px;
+  }
+
+  .mine-domain-switch button {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 16px;
+    border-radius: 13px;
   }
 
   .deal-upper {

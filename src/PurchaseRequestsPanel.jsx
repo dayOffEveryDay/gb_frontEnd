@@ -34,6 +34,13 @@ const SCOPE_OPTIONS = [
   { value: 'QUOTED', label: '我報價' },
 ];
 
+export const MY_PURCHASE_REQUEST_SCOPE_OPTIONS = [
+  { value: 'MY_ALL', label: '全部' },
+  { value: 'CREATED', label: '我的委託' },
+  { value: 'QUOTED', label: '我的報價' },
+  { value: 'ASSIGNED', label: '我的承接' },
+];
+
 const DELIVERY_LABELS = {
   FACE_TO_FACE: '面交',
   STORE_TO_STORE: '店到店',
@@ -48,6 +55,16 @@ const STATUS_LABELS = {
   CANCELLED: '已取消',
   EXPIRED: '已過期',
 };
+
+const STATUS_OPTIONS = [
+  { value: 'ALL', label: '全部' },
+  { value: 'OPEN', label: STATUS_LABELS.OPEN },
+  { value: 'ASSIGNED', label: STATUS_LABELS.ASSIGNED },
+  { value: 'DELIVERED', label: STATUS_LABELS.DELIVERED },
+  { value: 'COMPLETED', label: STATUS_LABELS.COMPLETED },
+  { value: 'CANCELLED', label: STATUS_LABELS.CANCELLED },
+  { value: 'EXPIRED', label: STATUS_LABELS.EXPIRED },
+];
 
 const INITIAL_FORM = {
   productName: '',
@@ -124,6 +141,18 @@ function normalizeQuote(quote) {
 
 function normalizePageItems(data) {
   return Array.isArray(data?.content) ? data.content.map(normalizePurchaseRequest) : [];
+}
+
+function dedupePurchaseRequests(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = item?.id == null ? `${item?.productName ?? ''}-${item?.createdAt ?? ''}` : String(item.id);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function isSameUser(a, b) {
@@ -1175,6 +1204,10 @@ function PurchaseRequestsPanel({
   keyword = '',
   viewMode = 'card',
   isCreateOpen,
+  initialScope = 'MARKET',
+  scopeOptions = SCOPE_OPTIONS,
+  scopeControl = 'dropdown',
+  showHideUnavailableToggle = true,
   hideUnavailableRequests = false,
   onCreateOpenChange,
   onHideUnavailableRequestsChange,
@@ -1182,7 +1215,8 @@ function PurchaseRequestsPanel({
   onRequireLogin,
   onShowToast,
 }) {
-  const [scope, setScope] = useState('MARKET');
+  const [scope, setScope] = useState(initialScope);
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [requests, setRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1212,6 +1246,12 @@ function PurchaseRequestsPanel({
     message: '',
   });
 
+  useEffect(() => {
+    if (!scopeOptions.some((option) => option.value === scope)) {
+      setScope(scopeOptions[0]?.value ?? 'MARKET');
+    }
+  }, [scope, scopeOptions]);
+
   const loadRequests = useCallback(async () => {
     setIsLoading(true);
     setError('');
@@ -1219,6 +1259,28 @@ function PurchaseRequestsPanel({
     try {
       const query = { page: 0, size: PAGE_SIZE };
       let data;
+
+      if (scope === 'MY_ALL') {
+        if (!token) {
+          setRequests([]);
+          setError('請先登入查看我的託購。');
+          return;
+        }
+
+        const [createdData, quotedData, assignedData] = await Promise.all([
+          fetchMyCreatedPurchaseRequests(query, token),
+          fetchMyQuotedPurchaseRequests(query, token),
+          fetchMyAssignedPurchaseRequests(query, token),
+        ]);
+        setRequests(
+          dedupePurchaseRequests([
+            ...normalizePageItems(createdData),
+            ...normalizePageItems(quotedData),
+            ...normalizePageItems(assignedData),
+          ])
+        );
+        return;
+      }
 
       if (scope === 'CREATED') {
         if (!token) {
@@ -1602,6 +1664,9 @@ function PurchaseRequestsPanel({
     if (scope === 'MARKET') {
       return '目前沒有開放中的託購單。';
     }
+    if (scope === 'MY_ALL') {
+      return '你還沒有相關託購。';
+    }
     if (scope === 'CREATED') {
       return '你還沒有發起託購。';
     }
@@ -1612,69 +1677,118 @@ function PurchaseRequestsPanel({
   }, [scope]);
 
   const visibleRequests = useMemo(() => {
-    if (!hideUnavailableRequests || scope !== 'MARKET') {
-      return requests;
+    let nextRequests = requests;
+
+    if (hideUnavailableRequests && scope === 'MARKET') {
+      nextRequests = nextRequests.filter((request) => request.status === 'OPEN');
     }
 
-    return requests.filter((request) => request.status === 'OPEN');
-  }, [hideUnavailableRequests, requests, scope]);
+    if (statusFilter !== 'ALL') {
+      nextRequests = nextRequests.filter((request) => request.status === statusFilter);
+    }
 
-  const currentScopeLabel = SCOPE_OPTIONS.find((option) => option.value === scope)?.label ?? SCOPE_OPTIONS[0].label;
+    return nextRequests;
+  }, [hideUnavailableRequests, requests, scope, statusFilter]);
+
+  const currentScopeLabel = scopeOptions.find((option) => option.value === scope)?.label ?? scopeOptions[0]?.label ?? '';
+  const useScopeTabs = scopeControl === 'tabs';
 
   return (
     <>
       <section className="purchase-request-toolbar">
         <div className="purchase-request-controls">
-          <div
-            className="purchase-request-scope-select"
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) {
-                setIsScopeMenuOpen(false);
-              }
-            }}
-          >
-            <button
-              type="button"
-              className="purchase-request-scope-trigger"
-              onClick={() => setIsScopeMenuOpen((current) => !current)}
-              aria-haspopup="listbox"
-              aria-expanded={isScopeMenuOpen}
+          {useScopeTabs ? (
+            <section className="category-strip purchase-request-scope-tabs" aria-label="委託範圍">
+              {scopeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={scope === option.value ? 'category-button active' : 'category-button'}
+                  onClick={() => setScope(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </section>
+          ) : (
+            <div
+              className="purchase-request-scope-select"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  setIsScopeMenuOpen(false);
+                }
+              }}
             >
-              <span>{currentScopeLabel}</span>
-              <span className="purchase-request-scope-chevron" aria-hidden="true"></span>
-            </button>
-            {isScopeMenuOpen && (
-              <div className="purchase-request-scope-menu" role="listbox" aria-label="委託範圍">
-                {SCOPE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={scope === option.value ? 'active' : ''}
-                    role="option"
-                    aria-selected={scope === option.value}
-                    onClick={() => {
-                      setScope(option.value);
-                      setIsScopeMenuOpen(false);
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <label className="purchase-request-hide-toggle">
-            <input
-              type="checkbox"
-              checked={hideUnavailableRequests}
-              onChange={(event) => onHideUnavailableRequestsChange?.(event.target.checked)}
-            />
-            <span className="purchase-request-hide-toggle-track" aria-hidden="true">
-              <span></span>
-            </span>
-            <span>隱藏已滿</span>
-          </label>
+              <button
+                type="button"
+                className="purchase-request-scope-trigger"
+                onClick={() => setIsScopeMenuOpen((current) => !current)}
+                aria-haspopup="listbox"
+                aria-expanded={isScopeMenuOpen}
+              >
+                <span>{currentScopeLabel}</span>
+                <span className="purchase-request-scope-chevron" aria-hidden="true"></span>
+              </button>
+              {isScopeMenuOpen && (
+                <div className="purchase-request-scope-menu" role="listbox" aria-label="委託範圍">
+                  {scopeOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={scope === option.value ? 'active' : ''}
+                      role="option"
+                      aria-selected={scope === option.value}
+                      onClick={() => {
+                        setScope(option.value);
+                        setIsScopeMenuOpen(false);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {showHideUnavailableToggle && (
+            <label className="purchase-request-hide-toggle">
+              <input
+                type="checkbox"
+                checked={hideUnavailableRequests}
+                onChange={(event) => onHideUnavailableRequestsChange?.(event.target.checked)}
+              />
+              <span className="purchase-request-hide-toggle-track" aria-hidden="true">
+                <span></span>
+              </span>
+              <span>隱藏已滿</span>
+            </label>
+          )}
         </div>
+        <section className="mine-status-inline-filter purchase-request-status-filter">
+          <span className="mine-status-filter-label">狀態</span>
+          <div className="mine-status-filter-options">
+            {STATUS_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={statusFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
+                onClick={() => setStatusFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </section>
+        <label className="mine-status-filter purchase-request-status-select">
+          <span className="mine-status-filter-label">狀態</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </section>
 
       <section className={viewMode === 'compact' ? 'purchase-request-grid compact' : 'purchase-request-grid'}>
