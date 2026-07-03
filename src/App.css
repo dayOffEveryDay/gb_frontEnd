@@ -645,7 +645,9 @@
 }
 
 .purchase-request-status.assigned,
-.purchase-request-status.delivered {
+.purchase-request-status.delivered,
+.purchase-request-status.quoting,
+.purchase-request-status.ordered {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
 }

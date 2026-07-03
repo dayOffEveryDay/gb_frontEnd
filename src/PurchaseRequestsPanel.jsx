@@ -9,11 +9,13 @@ import {
   createPurchaseRequestQuote,
   createPurchaseRequestReview,
   deliverPurchaseRequest,
+  extendPurchaseRequest,
   fetchMyAssignedPurchaseRequests,
   fetchMyCreatedPurchaseRequests,
   fetchMyQuotedPurchaseRequests,
   fetchPurchaseRequestQuotes,
   fetchPurchaseRequests,
+  uploadFiles,
   updatePurchaseRequestImageOrder,
 } from './api';
 import { formatDateTime } from './homeUtils';
@@ -49,9 +51,8 @@ const DELIVERY_LABELS = {
 
 const STATUS_LABELS = {
   OPEN: '開放中',
-  ASSIGNED: '已成立',
-  DELIVERED: '已交付',
-  COMPLETED: '已完成',
+  QUOTING: '報價中',
+  ORDERED: '已成立',
   CANCELLED: '已取消',
   EXPIRED: '已過期',
 };
@@ -59,25 +60,27 @@ const STATUS_LABELS = {
 const STATUS_OPTIONS = [
   { value: 'ALL', label: '全部' },
   { value: 'OPEN', label: STATUS_LABELS.OPEN },
-  { value: 'ASSIGNED', label: STATUS_LABELS.ASSIGNED },
-  { value: 'DELIVERED', label: STATUS_LABELS.DELIVERED },
-  { value: 'COMPLETED', label: STATUS_LABELS.COMPLETED },
+  { value: 'QUOTING', label: STATUS_LABELS.QUOTING },
+  { value: 'ORDERED', label: STATUS_LABELS.ORDERED },
   { value: 'CANCELLED', label: STATUS_LABELS.CANCELLED },
   { value: 'EXPIRED', label: STATUS_LABELS.EXPIRED },
 ];
 
 const INITIAL_FORM = {
-  productName: '',
+  itemName: '',
+  itemDescription: '',
   rewardType: 'FIXED',
   fixedRewardAmount: '',
   deliveryMethod: 'FACE_TO_FACE',
-  requestArea: '',
-  deadlineMode: 'DATE',
-  deadlineAt: '',
-  deliveryTimeType: 'DISCUSS',
-  deliveryTimeNote: '',
+  requesterCity: '',
+  requesterDistrict: '',
+  deliveryPublicSummary: '',
+  requestExpireTime: '',
+  deliveryDeadlineHours: '72',
   minCreditScore: '',
-  description: '',
+  receiverName: '',
+  receiverPhone: '',
+  addressDetail: '',
   images: [],
 };
 
@@ -87,9 +90,9 @@ function normalizeUserSummary(user) {
   }
 
   return {
-    id: user.id ?? null,
+    id: user.id ?? user.userId ?? user.user_id ?? null,
     displayName: user.displayName ?? user.display_name ?? '--',
-    profileImageUrl: user.profileImageUrl ?? user.profile_image_url ?? '',
+    profileImageUrl: user.profileImageUrl ?? user.profile_image_url ?? user.avatarUrl ?? user.avatar_url ?? '',
     creditScore: user.creditScore ?? user.credit_score ?? '--',
   };
 }
@@ -104,26 +107,46 @@ function normalizePurchaseRequest(item) {
   return {
     ...item,
     id: item?.id,
-    productName: item?.productName ?? item?.product_name ?? '--',
+    productName: item?.itemName ?? item?.item_name ?? item?.productName ?? item?.product_name ?? '--',
     imageUrls,
     rewardType: (item?.rewardType ?? item?.reward_type ?? 'FIXED').toString().toUpperCase(),
     fixedRewardAmount: item?.fixedRewardAmount ?? item?.fixed_reward_amount ?? null,
     quoteCount: Number(item?.quoteCount ?? item?.quote_count ?? 0),
     deliveryMethod: (item?.deliveryMethod ?? item?.delivery_method ?? '').toString().toUpperCase(),
-    requestArea: item?.requestArea ?? item?.request_area ?? '',
-    deadlineAt: item?.deadlineAt ?? item?.deadline_at ?? '',
-    deliveryTimeType: item?.deliveryTimeType ?? item?.delivery_time_type ?? 'DISCUSS',
-    deliveryTimeNote: item?.deliveryTimeNote ?? item?.delivery_time_note ?? '',
+    requesterCity: item?.requesterCity ?? item?.requester_city ?? '',
+    requesterDistrict: item?.requesterDistrict ?? item?.requester_district ?? '',
+    requestArea:
+      [item?.requesterCity ?? item?.requester_city, item?.requesterDistrict ?? item?.requester_district]
+        .filter(Boolean)
+        .join('') || item?.requestArea || item?.request_area || '',
+    deliveryPublicSummary:
+      item?.deliveryPublicSummary ?? item?.delivery_public_summary ?? item?.deliveryTimeNote ?? item?.delivery_time_note ?? '',
+    deadlineAt: item?.requestExpireTime ?? item?.request_expire_time ?? item?.deadlineAt ?? item?.deadline_at ?? '',
+    deliveryDeadlineHours: item?.deliveryDeadlineHours ?? item?.delivery_deadline_hours ?? null,
     minCreditScore: item?.minCreditScore ?? item?.min_credit_score ?? null,
-    description: item?.description ?? '',
+    description: item?.itemDescription ?? item?.item_description ?? item?.description ?? '',
     status: (item?.status ?? 'OPEN').toString().toUpperCase(),
-    requester: normalizeUserSummary(item?.requester),
+    requester: normalizeUserSummary(
+      item?.requester ?? {
+        id: item?.requesterId ?? item?.requester_id,
+        displayName: item?.requesterDisplayName ?? item?.requester_display_name,
+        profileImageUrl: item?.requesterProfileImageUrl ?? item?.requester_profile_image_url,
+        creditScore: item?.requesterCreditScore ?? item?.requester_credit_score,
+      }
+    ),
     assignedRunner: normalizeUserSummary(item?.assignedRunner ?? item?.assigned_runner),
     acceptedQuoteId: item?.acceptedQuoteId ?? item?.accepted_quote_id ?? null,
+    assignedAt: item?.assignedAt ?? item?.assigned_at ?? '',
+    fulfillmentDeadlineAt: item?.fulfillmentDeadlineAt ?? item?.fulfillment_deadline_at ?? '',
+    chatRoomId: item?.chatRoomId ?? item?.chat_room_id ?? null,
     canQuote: Boolean(item?.canQuote ?? item?.can_quote),
     canAcceptDirectly: Boolean(item?.canAcceptDirectly ?? item?.can_accept_directly),
+    canEdit: Boolean(item?.canEdit ?? item?.can_edit),
     actBlockedReason: item?.actBlockedReason ?? item?.act_blocked_reason ?? '',
+    deliveredAt: item?.deliveredAt ?? item?.delivered_at ?? '',
+    completedAt: item?.completedAt ?? item?.completed_at ?? '',
     createdAt: item?.createdAt ?? item?.created_at ?? '',
+    updatedAt: item?.updatedAt ?? item?.updated_at ?? '',
   };
 }
 
@@ -364,8 +387,8 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
             <span>商品名稱 *</span>
             <input
               type="text"
-              value={form.productName}
-              onChange={(event) => updateField('productName', event.target.value)}
+              value={form.itemName}
+              onChange={(event) => updateField('itemName', event.target.value)}
               placeholder="例如：柯克蘭衛生紙"
               required
             />
@@ -485,7 +508,7 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
                 <span>酬金，不含商品 *</span>
                 <input
                   type="number"
-                  min="0"
+                  min="1"
                   inputMode="numeric"
                   value={form.fixedRewardAmount}
                   onChange={(event) => updateField('fixedRewardAmount', event.target.value)}
@@ -506,12 +529,12 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
             </label>
 
             <label className="form-field">
-              <span>委託地區 *</span>
+              <span>委託人城市 *</span>
               <input
                 type="text"
-                value={form.requestArea}
-                onChange={(event) => updateField('requestArea', event.target.value)}
-                placeholder="台北中山區"
+                value={form.requesterCity}
+                onChange={(event) => updateField('requesterCity', event.target.value)}
+                placeholder="台北市"
                 required
               />
             </label>
@@ -519,35 +542,37 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
 
           <div className="purchase-request-two-col">
             <label className="form-field">
-              <span>委託期限</span>
-              <select value={form.deadlineMode} onChange={(event) => updateField('deadlineMode', event.target.value)}>
-                <option value="DATE">指定期限</option>
-                <option value="NONE">無期限</option>
-              </select>
+              <span>行政區</span>
+              <input
+                type="text"
+                value={form.requesterDistrict}
+                onChange={(event) => updateField('requesterDistrict', event.target.value)}
+                placeholder="中山區"
+              />
             </label>
 
-            {form.deadlineMode === 'DATE' && (
-              <label className="form-field">
-                <span>期限時間</span>
-                <input
-                  type="datetime-local"
-                  value={form.deadlineAt}
-                  onChange={(event) => updateField('deadlineAt', event.target.value)}
-                />
-              </label>
-            )}
+            <label className="form-field">
+              <span>委託到期時間 *</span>
+              <input
+                type="datetime-local"
+                value={form.requestExpireTime}
+                onChange={(event) => updateField('requestExpireTime', event.target.value)}
+                required
+              />
+            </label>
           </div>
 
           <div className="purchase-request-two-col">
             <label className="form-field">
-              <span>交貨時間</span>
-              <select
-                value={form.deliveryTimeType}
-                onChange={(event) => updateField('deliveryTimeType', event.target.value)}
-              >
-                <option value="DISCUSS">討論</option>
-                <option value="SPECIFIED">指定</option>
-              </select>
+              <span>成立後交付時限（小時）*</span>
+              <input
+                type="number"
+                min="1"
+                inputMode="numeric"
+                value={form.deliveryDeadlineHours}
+                onChange={(event) => updateField('deliveryDeadlineHours', event.target.value)}
+                required
+              />
             </label>
 
             <label className="form-field">
@@ -565,21 +590,56 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
           </div>
 
           <label className="form-field">
-            <span>交貨時間說明</span>
+            <span>公開交付摘要 *</span>
             <input
               type="text"
-              value={form.deliveryTimeNote}
-              onChange={(event) => updateField('deliveryTimeNote', event.target.value)}
-              placeholder="例如：平日晚上可討論"
+              value={form.deliveryPublicSummary}
+              onChange={(event) => updateField('deliveryPublicSummary', event.target.value)}
+              placeholder={form.deliveryMethod === 'FACE_TO_FACE' ? '例如：台北車站面交' : '例如：宅配至台北市中山區'}
+              required
             />
           </label>
+
+          {form.deliveryMethod !== 'FACE_TO_FACE' && (
+            <>
+              <div className="purchase-request-two-col">
+                <label className="form-field">
+                  <span>收件人 *</span>
+                  <input
+                    type="text"
+                    value={form.receiverName}
+                    onChange={(event) => updateField('receiverName', event.target.value)}
+                    required
+                  />
+                </label>
+                <label className="form-field">
+                  <span>收件電話 *</span>
+                  <input
+                    type="tel"
+                    value={form.receiverPhone}
+                    onChange={(event) => updateField('receiverPhone', event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
+              <label className="form-field">
+                <span>{form.deliveryMethod === 'STORE_TO_STORE' ? '門市／取件資料 *' : '詳細地址 *'}</span>
+                <input
+                  type="text"
+                  value={form.addressDetail}
+                  onChange={(event) => updateField('addressDetail', event.target.value)}
+                  required
+                />
+              </label>
+            </>
+          )}
 
           <label className="form-field">
             <span>補充說明</span>
             <textarea
               rows="3"
-              value={form.description}
-              onChange={(event) => updateField('description', event.target.value)}
+              value={form.itemDescription}
+              onChange={(event) => updateField('itemDescription', event.target.value)}
               placeholder="商品規格、數量、替代品、取貨細節"
             />
           </label>
@@ -775,6 +835,7 @@ function PurchaseRequestCard({
   onDeliver,
   onComplete,
   onCancel,
+  onExtend,
   onReview,
   onManageImages,
   onRequireLogin,
@@ -786,11 +847,13 @@ function PurchaseRequestCard({
   const blockedLabel = getBlockedLabel(request.actBlockedReason);
   const isBusy = actionId === request.id;
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const canViewQuotes = isRequester && request.rewardType === 'QUOTE' && request.status === 'OPEN';
+  const canViewQuotes = isRequester && request.rewardType === 'QUOTE' && ['OPEN', 'QUOTING'].includes(request.status);
   const canManageImages = isRequester && request.status === 'OPEN' && request.imageUrls.length > 1;
-  const canCancelRequest = isRequester && request.status === 'OPEN';
-  const canQuoteRequest = currentUser && request.status === 'OPEN' && request.rewardType === 'QUOTE' && !isRequester;
-  const hasActionMenu = canViewQuotes || canManageImages || canCancelRequest;
+  const canCancelRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
+  const canExtendRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
+  const canQuoteRequest =
+    currentUser && ['OPEN', 'QUOTING'].includes(request.status) && request.rewardType === 'QUOTE' && !isRequester;
+  const hasActionMenu = canViewQuotes || canManageImages || canCancelRequest || canExtendRequest;
   const hasInlineActions =
     (!currentUser && request.status === 'OPEN') ||
     (currentUser && request.status === 'OPEN' && request.rewardType === 'FIXED' && !isRequester) ||
@@ -861,6 +924,18 @@ function PurchaseRequestCard({
                     disabled={isBusy}
                   >
                     取消委託
+                  </button>
+                )}
+                {canExtendRequest && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onExtend(request);
+                      setIsActionMenuOpen(false);
+                    }}
+                    disabled={isBusy}
+                  >
+                    延長期限
                   </button>
                 )}
               </div>
@@ -1045,6 +1120,18 @@ function PurchaseRequestCard({
                   取消委託
                 </button>
               )}
+              {canExtendRequest && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onExtend(request);
+                    setIsActionMenuOpen(false);
+                  }}
+                  disabled={isBusy}
+                >
+                  延長期限
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1087,8 +1174,12 @@ function PurchaseRequestCard({
         <div className="purchase-request-meta-grid">
           <span>酬金：{getRewardLabel(request)}</span>
           <span>交貨：{DELIVERY_LABELS[request.deliveryMethod] ?? request.deliveryMethod}</span>
+          {request.deliveryDeadlineHours != null && <span>成立後：{request.deliveryDeadlineHours} 小時內交付</span>}
         </div>
 
+        {viewMode !== 'compact' && request.deliveryPublicSummary && (
+          <p className="purchase-request-description">交付：{request.deliveryPublicSummary}</p>
+        )}
         {viewMode !== 'compact' && request.description && (
           <p className="purchase-request-description">{request.description}</p>
         )}
@@ -1307,6 +1398,7 @@ function PurchaseRequestsPanel({
         data = await fetchPurchaseRequests(
           {
             ...query,
+            status: statusFilter === 'ALL' ? undefined : statusFilter,
             keyword: keyword.trim() || undefined,
           },
           token
@@ -1320,7 +1412,7 @@ function PurchaseRequestsPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [keyword, scope, token]);
+  }, [keyword, scope, statusFilter, token]);
 
   useEffect(() => {
     void loadRequests();
@@ -1367,7 +1459,7 @@ function PurchaseRequestsPanel({
       onRequireLogin?.();
       return;
     }
-    if (!form.productName.trim()) {
+    if (!form.itemName.trim()) {
       setCreateError('商品名稱必填');
       return;
     }
@@ -1379,23 +1471,62 @@ function PurchaseRequestsPanel({
       setCreateError('圖片最多三張');
       return;
     }
+    if (!form.requesterCity.trim() || !form.deliveryPublicSummary.trim()) {
+      setCreateError('委託城市與公開交付摘要必填');
+      return;
+    }
+    if (!form.requestExpireTime || Number(form.deliveryDeadlineHours) <= 0) {
+      setCreateError('請填寫有效的委託期限與交付時限');
+      return;
+    }
 
     setIsCreating(true);
     setCreateError('');
     try {
+      const uploadResult = form.images.length > 0 ? await uploadFiles(form.images, token) : null;
+      const imageUrls = Array.isArray(uploadResult?.urls) ? uploadResult.urls : [];
+      if (form.images.length > 0 && imageUrls.length !== form.images.length) {
+        throw new Error('圖片上傳結果不完整，請稍後再試。');
+      }
+      const requestExpireTime = form.requestExpireTime.length === 16 ? `${form.requestExpireTime}:00` : form.requestExpireTime;
+      const isFaceToFace = form.deliveryMethod === 'FACE_TO_FACE';
+
       await createPurchaseRequest(
         {
-          productName: form.productName.trim(),
+          itemName: form.itemName.trim(),
+          itemDescription: form.itemDescription.trim() || undefined,
+          imageUrls,
           rewardType: form.rewardType,
-          fixedRewardAmount: form.rewardType === 'FIXED' ? form.fixedRewardAmount : undefined,
+          fixedRewardAmount: form.rewardType === 'FIXED' ? Number(form.fixedRewardAmount) : undefined,
+          requesterCity: form.requesterCity.trim(),
+          requesterDistrict: form.requesterDistrict.trim() || undefined,
           deliveryMethod: form.deliveryMethod,
-          requestArea: form.requestArea.trim(),
-          deadlineAt: form.deadlineMode === 'DATE' ? form.deadlineAt : undefined,
-          deliveryTimeType: form.deliveryTimeType,
-          deliveryTimeNote: form.deliveryTimeNote.trim(),
-          minCreditScore: form.minCreditScore,
-          description: form.description.trim(),
-          images: form.images,
+          deliveryPublicSummary: form.deliveryPublicSummary.trim(),
+          deliveryPrivateDetail: isFaceToFace
+            ? undefined
+            : {
+                receiverName: form.receiverName.trim(),
+                receiverPhone: form.receiverPhone.trim(),
+                city: form.requesterCity.trim(),
+                district: form.requesterDistrict.trim() || undefined,
+                addressDetail: form.addressDetail.trim(),
+              },
+          requestExpireTime,
+          deliveryDeadlineHours: Number(form.deliveryDeadlineHours),
+          minCreditScore: form.minCreditScore === '' ? 0 : Number(form.minCreditScore),
+          manualMeetupRanges: isFaceToFace
+            ? [
+                {
+                  locationType: 'CUSTOM',
+                  city: form.requesterCity.trim(),
+                  district: form.requesterDistrict.trim() || undefined,
+                  displayText: form.deliveryPublicSummary.trim(),
+                  detail: {},
+                },
+              ]
+            : undefined,
+          saveManualToProfile: false,
+          saveDeliveryToProfile: false,
         },
         token
       );
@@ -1660,6 +1791,26 @@ function PurchaseRequestsPanel({
     }
   };
 
+  const handleExtend = async (request) => {
+    if (!token) {
+      onRequireLogin?.();
+      return;
+    }
+
+    const currentValue = request.deadlineAt ? request.deadlineAt.slice(0, 16) : '';
+    const nextValue = window.prompt('請輸入新的委託期限（YYYY-MM-DDTHH:mm）', currentValue);
+    if (!nextValue) {
+      return;
+    }
+
+    const requestExpireTime = nextValue.length === 16 ? `${nextValue}:00` : nextValue;
+    await withAction(
+      request,
+      () => extendPurchaseRequest(request.id, requestExpireTime, token),
+      '委託期限已延長。'
+    );
+  };
+
   const emptyText = useMemo(() => {
     if (scope === 'MARKET') {
       return '目前沒有開放中的託購單。';
@@ -1680,7 +1831,7 @@ function PurchaseRequestsPanel({
     let nextRequests = requests;
 
     if (hideUnavailableRequests && scope === 'MARKET') {
-      nextRequests = nextRequests.filter((request) => request.status === 'OPEN');
+      nextRequests = nextRequests.filter((request) => ['OPEN', 'QUOTING'].includes(request.status));
     }
 
     if (statusFilter !== 'ALL') {
@@ -1820,6 +1971,7 @@ function PurchaseRequestsPanel({
               onDeliver={(item) => withAction(item, () => deliverPurchaseRequest(item.id, token), '已標記交付。')}
               onComplete={(item) => withAction(item, () => completePurchaseRequest(item.id, token), '託購已完成。')}
               onCancel={(item) => setCancelTarget(item)}
+              onExtend={handleExtend}
               onReview={handleOpenReview}
               onManageImages={handleOpenImageOrder}
               onRequireLogin={onRequireLogin}

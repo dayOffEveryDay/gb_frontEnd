@@ -98,8 +98,8 @@ function isAuthFailureStatus(status) {
   return status === 401 || status === 403;
 }
 
-async function executeRequest(path, { method = 'GET', body, token, headers = {}, query } = {}) {
-  const resolvedToken = token || getStoredToken();
+async function executeRequest(path, { method = 'GET', body, token, headers = {}, query, auth = true } = {}) {
+  const resolvedToken = auth ? token || getStoredToken() : '';
   const response = await fetch(buildUrl(path, query), {
     method,
     headers: buildRequestHeaders({ body, headers, token: resolvedToken }),
@@ -158,6 +158,7 @@ async function request(path, options = {}) {
 
   const canRefresh =
     !skipAuthRefresh &&
+    requestOptions.auth !== false &&
     !path.startsWith('/api/v1/auth/') &&
     isAuthFailureStatus(response.status) &&
     Boolean(requestOptions.token || getStoredToken()) &&
@@ -333,11 +334,11 @@ export function clearLineLoginParams() {
 }
 
 export function fetchStores() {
-  return request('/api/v1/stores');
+  return request('/api/v1/stores', { auth: false });
 }
 
 export function fetchCategories() {
-  return request('/api/v1/categories');
+  return request('/api/v1/categories', { auth: false });
 }
 
 // 取得團購列表，支援分頁與篩選條件。
@@ -397,7 +398,7 @@ export function fetchCampaignChatMessages(campaignId, token) {
   });
 }
 
-export function uploadChatImages(files, token, campaignId) {
+export function uploadFiles(files, token, campaignId) {
   const formData = new FormData();
 
   files.forEach((file) => {
@@ -452,32 +453,45 @@ export function fetchPurchaseRequests(params, token) {
   return request('/api/v1/purchase-requests', {
     query: params,
     token,
+    auth: Boolean(token),
   });
+}
+
+export function uploadChatImages(files, token, campaignId) {
+  return uploadFiles(files, token, campaignId);
 }
 
 export function fetchPurchaseRequest(requestId, token) {
   return request(`/api/v1/purchase-requests/${requestId}`, {
     token,
+    auth: Boolean(token),
   });
 }
 
 export function createPurchaseRequest(payload, token) {
+  return request('/api/v1/purchase-requests', {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function updatePurchaseRequest(requestId, payload, token) {
+  return request(`/api/v1/purchase-requests/${requestId}`, {
+    method: 'PUT',
+    body: payload,
+    token,
+  });
+}
+
+export function addPurchaseRequestImages(requestId, images, token) {
   const formData = new FormData();
 
-  Object.entries(payload).forEach(([key, value]) => {
-    if (key === 'images' && Array.isArray(value)) {
-      value.forEach((file) => {
-        formData.append('images', file);
-      });
-      return;
-    }
-
-    if (value !== undefined && value !== null && value !== '') {
-      formData.append(key, value);
-    }
+  images.forEach((file) => {
+    formData.append('images', file);
   });
 
-  return request('/api/v1/purchase-requests', {
+  return request(`/api/v1/purchase-requests/${requestId}/images`, {
     method: 'POST',
     body: formData,
     token,
@@ -490,6 +504,13 @@ export function updatePurchaseRequestImageOrder(requestId, imageUrls, token) {
     body: {
       imageUrls,
     },
+    token,
+  });
+}
+
+export function deletePurchaseRequestImage(requestId, fileName, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/images/${encodeURIComponent(fileName)}`, {
+    method: 'DELETE',
     token,
   });
 }
@@ -509,8 +530,29 @@ export function createPurchaseRequestQuote(requestId, payload, token) {
   });
 }
 
+export function updatePurchaseRequestQuote(requestId, quoteId, payload, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}`, {
+    method: 'PUT',
+    body: payload,
+    token,
+  });
+}
+
+export function cancelPurchaseRequestQuote(requestId, quoteId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}/cancel`, {
+    method: 'POST',
+    token,
+  });
+}
+
 export function fetchPurchaseRequestQuotes(requestId, token) {
   return request(`/api/v1/purchase-requests/${requestId}/quotes`, {
+    token,
+  });
+}
+
+export function fetchMyPurchaseRequestQuote(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/quotes/me`, {
     token,
   });
 }
@@ -540,6 +582,44 @@ export function cancelPurchaseRequest(requestId, token, reason) {
   return request(`/api/v1/purchase-requests/${requestId}/cancel`, {
     method: 'POST',
     body: reason ? { reason } : undefined,
+    token,
+  });
+}
+
+export function extendPurchaseRequest(requestId, requestExpireTime, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/extend`, {
+    method: 'PATCH',
+    body: { requestExpireTime },
+    token,
+  });
+}
+
+export function fetchUserDeliveryProfiles(profileType, token) {
+  return request('/api/v1/user-delivery-profiles', {
+    query: { profileType },
+    token,
+  });
+}
+
+export function createUserDeliveryProfile(payload, token) {
+  return request('/api/v1/user-delivery-profiles', {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function updateUserDeliveryProfile(profileId, payload, token) {
+  return request(`/api/v1/user-delivery-profiles/${profileId}`, {
+    method: 'PUT',
+    body: payload,
+    token,
+  });
+}
+
+export function deleteUserDeliveryProfile(profileId, token) {
+  return request(`/api/v1/user-delivery-profiles/${profileId}`, {
+    method: 'DELETE',
     token,
   });
 }
@@ -590,6 +670,7 @@ export function lineLogin(payload) {
   return request('/api/v1/auth/line', {
     method: 'POST',
     body: payload,
+    auth: false,
   });
 }
 
@@ -598,6 +679,7 @@ export function devLogin(userId) {
     query: {
       userId,
     },
+    auth: false,
   });
 }
 
