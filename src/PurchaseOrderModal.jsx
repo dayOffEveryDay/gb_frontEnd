@@ -24,27 +24,47 @@ const ORDER_STATUS_LABELS = {
   SHIPPED: '已寄出',
   DELIVERED_PENDING_CONFIRM: '已交付，等待確認',
   COMPLETED: '已完成',
+  CANCELLED: '已取消',
   UNAVAILABLE_CANCELLED: '缺貨取消',
   ABNORMAL_PENDING_RESPONSE: '異常待回應',
   PENALIZED_CANCELLED: '有責取消',
   DISPUTE_CLOSED_NO_PENALTY: '異常已結案',
 };
 
+const DELIVERY_METHOD_LABELS = {
+  FACE_TO_FACE: '面交',
+  STORE_TO_STORE: '店到店',
+  HOME_DELIVERY: '宅配',
+};
+
 const EVENT_LABELS = {
   ORDER_CREATED_FROM_QUOTE: '選定報價並成立訂單',
   ORDER_CREATED_BY_ACCEPT: '直接承接並成立訂單',
+  ORDER_CONFIRMED: '雙方已確認',
   REQUESTER_CONFIRMED: '委託人確認',
   RUNNER_CONFIRMED: '接單人確認',
   RUNNER_STARTED: '接單人開始處理',
   ORDER_SHIPPED: '商品已寄出',
+  RUNNER_MARKED_DELIVERED: '接單人標記交付',
   ORDER_DELIVERED: '商品已交付',
   ORDER_COMPLETED: '訂單完成',
+  ORDER_COMPLETED_BY_REQUESTER: '委託人確認完成',
+  ORDER_AUTO_COMPLETED: '系統自動完成',
   ITEM_UNAVAILABLE: '商品缺貨',
+  ITEM_UNAVAILABLE_REPORTED: '回報商品缺貨',
   ORDER_CANCELLED: '訂單取消',
+  ORDER_CANCELLED_BY_REQUESTER: '委託人取消訂單',
+  ORDER_CANCELLED_BY_RUNNER: '接單人取消訂單',
+  ORDER_CONFIRMATION_TIMEOUT: '訂單確認逾時',
   ABNORMAL_REPORTED: '提出交易異常',
   ABNORMAL_RESPONDED_NO_PENALTY: '已回應交易異常',
   ABNORMAL_TIMEOUT_PENALIZED: '異常逾時處理',
 };
+
+function getLabel(map, value) {
+  const key = (value ?? '').toString().toUpperCase();
+  return map[key] ?? value ?? '--';
+}
 
 function promptRequired(message, defaultValue = '') {
   const value = window.prompt(message, defaultValue);
@@ -108,6 +128,7 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
   const availableActions = useMemo(() => getAvailableActions(order, isRequester, isRunner), [isRequester, isRunner, order]);
   const counterpartId = isRequester ? order?.runnerId : order?.requesterId;
   const counterpartName = isRequester ? order?.runnerDisplayName : order?.requesterDisplayName;
+  const deliveryMethod = (order?.deliveryMethod ?? '').toString().toUpperCase();
 
   if (!isOpen) return null;
 
@@ -219,11 +240,11 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
         {order && (
           <>
             <div className="purchase-order-summary-grid">
-              <span>狀態<strong>{ORDER_STATUS_LABELS[order.status] ?? order.status}</strong></span>
+              <span>狀態<strong>{getLabel(ORDER_STATUS_LABELS, order.status)}</strong></span>
               <span>委託人<strong>{order.requesterDisplayName || '--'}</strong></span>
               <span>接單人<strong>{order.runnerDisplayName || '--'}</strong></span>
               <span>酬金<strong>NT$ {order.rewardAmount ?? 0}</strong></span>
-              <span>交付方式<strong>{order.deliveryMethod || '--'}</strong></span>
+              <span>交付方式<strong>{getLabel(DELIVERY_METHOD_LABELS, deliveryMethod || order.deliveryMethod)}</strong></span>
               <span>交付期限<strong>{formatDateTime(order.deliveryDeadlineAt) || '--'}</strong></span>
             </div>
 
@@ -262,7 +283,7 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
           {!isLoading && events.length === 0 && <p className="muted-copy">目前沒有事件紀錄。</p>}
           {events.map((event) => (
             <article key={event.id}>
-              <strong>{EVENT_LABELS[event.eventType] ?? event.eventType}</strong>
+              <strong>{getLabel(EVENT_LABELS, event.eventType)}</strong>
               <span>{event.actorDisplayName || '系統'} · {formatDateTime(event.createdAt)}</span>
               {event.description && <p>{event.description}</p>}
             </article>

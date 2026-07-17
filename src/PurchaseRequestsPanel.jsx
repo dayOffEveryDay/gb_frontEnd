@@ -65,8 +65,11 @@ const STATUS_LABELS = {
   OPEN: '開放中',
   QUOTING: '報價中',
   ORDERED: '已成立',
+  ASSIGNED: '已指派',
+  DELIVERED: '已交付',
   CANCELLED: '已取消',
   EXPIRED: '已過期',
+  FAILED: '失敗',
   WAITING_CONFIRMATION: '等待確認',
   CONFIRMED: '已確認',
   IN_PROGRESS: '處理中',
@@ -77,11 +80,22 @@ const STATUS_LABELS = {
   ABNORMAL_PENDING_RESPONSE: '異常待回應',
   PENALIZED_CANCELLED: '有責取消',
   DISPUTE_CLOSED_NO_PENALTY: '異常已結案',
+  PENDING: '待處理',
   ACTIVE: '有效報價',
   WITHDRAWN: '已撤回',
   SELECTED: '已選定',
   NOT_SELECTED: '未選定',
 };
+
+function getStatusLabel(status) {
+  const key = (status ?? '').toString().toUpperCase();
+  return STATUS_LABELS[key] ?? status ?? '--';
+}
+
+function getDeliveryLabel(deliveryMethod) {
+  const key = (deliveryMethod ?? '').toString().toUpperCase();
+  return DELIVERY_LABELS[key] ?? deliveryMethod ?? '--';
+}
 
 const STATUS_OPTIONS = [
   { value: 'ALL', label: '全部' },
@@ -1132,6 +1146,7 @@ function PurchaseRequestCard({
   const blockedLabel = getBlockedLabel(request.actBlockedReason);
   const isBusy = actionId === request.id;
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const actionMenuRef = useRef(null);
   const canViewQuotes = isRequester && request.rewardType === 'QUOTE' && ['OPEN', 'QUOTING'].includes(request.status);
   const canManageImages = isRequester && request.status === 'OPEN';
   const canCancelRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
@@ -1157,9 +1172,25 @@ function PurchaseRequestCard({
     canCompleteOrder ||
     canReviewOrder;
 
+  useEffect(() => {
+    if (!isActionMenuOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (actionMenuRef.current?.contains(event.target)) {
+        return;
+      }
+      setIsActionMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isActionMenuOpen]);
+
   if (viewMode === 'compact') {
     const requesterName = request.requester?.displayName ?? '--';
-    const deliveryLabel = DELIVERY_LABELS[request.deliveryMethod] ?? request.deliveryMethod;
+    const deliveryLabel = getDeliveryLabel(request.deliveryMethod);
 
     return (
       <article
@@ -1172,7 +1203,7 @@ function PurchaseRequestCard({
           .join(' ')}
       >
         {hasActionMenu && (
-          <div className="purchase-request-menu-wrap">
+          <div className="purchase-request-menu-wrap" ref={actionMenuRef}>
             <button
               type="button"
               className="purchase-request-menu-button"
@@ -1282,7 +1313,7 @@ function PurchaseRequestCard({
           <div className="compact-market-title-row">
             <strong className="compact-market-title">{request.productName}</strong>
             <span className={`compact-market-type purchase-request-compact-status ${cardStatus.toLowerCase()}`}>
-              {STATUS_LABELS[cardStatus] ?? cardStatus}
+              {getStatusLabel(cardStatus)}
             </span>
           </div>
           <div className="compact-market-meta">
@@ -1391,7 +1422,7 @@ function PurchaseRequestCard({
         .join(' ')}
     >
       {hasActionMenu && (
-        <div className="purchase-request-menu-wrap">
+        <div className="purchase-request-menu-wrap" ref={actionMenuRef}>
           <button
             type="button"
             className="purchase-request-menu-button"
@@ -1512,13 +1543,13 @@ function PurchaseRequestCard({
         <div className="purchase-request-title-row">
           <h3>{request.productName}</h3>
           <span className={`purchase-request-status ${cardStatus.toLowerCase()}`}>
-            {STATUS_LABELS[cardStatus] ?? cardStatus}
+            {getStatusLabel(cardStatus)}
           </span>
         </div>
 
         <div className="purchase-request-meta-grid">
           <span>酬金：{getRewardLabel(request)}</span>
-          <span>交貨：{DELIVERY_LABELS[request.deliveryMethod] ?? request.deliveryMethod}</span>
+          <span>交貨：{getDeliveryLabel(request.deliveryMethod)}</span>
           {request.deliveryDeadlineHours != null && <span>成立後：{request.deliveryDeadlineHours} 小時內交付</span>}
         </div>
 
@@ -1624,7 +1655,7 @@ function PurchaseRequestCard({
                   onClick={() => onAcceptQuote(request, quote)}
                   disabled={quote.status !== 'ACTIVE' || isBusy}
                 >
-                  {quote.status === 'ACTIVE' ? '委託' : STATUS_LABELS[quote.status] ?? quote.status}
+                  {quote.status === 'ACTIVE' ? '委託' : getStatusLabel(quote.status)}
                 </button>
               </div>
             ))}

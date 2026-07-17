@@ -1,6 +1,21 @@
 import { useRef, useState } from 'react';
 import { ChatRoomsIcon, GhostIcon } from './Icons';
 
+const PARTICIPANT_STATUS_LABELS = {
+  JOINED: '已加入',
+  CANCELLED: '已退出',
+  KICKED: '已移除',
+  CONFIRMED: '已確認收貨',
+  DELIVERED: '已交付',
+  NO_SHOW: '未出現',
+  DISPUTED: '已提出爭議',
+};
+
+function getParticipantStatusLabel(status) {
+  const key = (status ?? 'JOINED').toString().toUpperCase();
+  return PARTICIPANT_STATUS_LABELS[key] ?? status ?? '已加入';
+}
+
 function ParticipationActionModal({
   isOpen,
   campaign,
@@ -304,7 +319,7 @@ function ParticipationActionModal({
                                 <div className="participation-member-copy">
                                   <span>{participant.displayName}</span>
                                   <strong>
-                                    {participant.quantity} {'\u4ef6 / '} {participant.status || 'JOINED'}
+                                    {participant.quantity} {'\u4ef6 / '} {getParticipantStatusLabel(participant.status)}
                                   </strong>
                                 </div>
                                 <div className="participation-member-actions">

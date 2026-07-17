@@ -142,6 +142,28 @@
   white-space: nowrap;
 }
 
+.chat-status-row.purchase-chat-order-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat-status-row.purchase-chat-order-status > span {
+  min-width: 0;
+}
+
+.chat-status-row.purchase-chat-order-status .chat-status-action {
+  justify-self: end;
+}
+
 .purchase-order-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -153,14 +175,15 @@
   display: grid;
   gap: 4px;
   padding: 12px;
-  border: 1px solid var(--border-color, #dde5df);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  color: var(--muted-text, #66736b);
+  background: color-mix(in srgb, var(--surface) 42%, transparent);
+  color: var(--ink-soft);
   font-size: 0.82rem;
 }
 
 .purchase-order-summary-grid strong {
-  color: var(--text-color, #17231c);
+  color: var(--ink);
   font-size: 0.96rem;
 }
 
@@ -176,7 +199,8 @@
   overflow: auto;
   padding: 12px;
   border-radius: 10px;
-  background: var(--surface-soft, #f4f7f5);
+  background: var(--surface-alt);
+  color: var(--ink);
   white-space: pre-wrap;
 }
 
@@ -194,14 +218,14 @@
   display: grid;
   gap: 5px;
   padding: 12px;
-  border: 1px solid var(--border-color, #dde5df);
+  border: 1px solid var(--line);
   border-radius: 12px;
 }
 
 .purchase-order-events article > span,
 .purchase-received-review-list article > span,
 .delivery-profile-row span {
-  color: var(--muted-text, #66736b);
+  color: var(--ink-soft);
   font-size: 0.82rem;
 }
 

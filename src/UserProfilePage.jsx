@@ -19,7 +19,22 @@ import {
   unfollowHost,
   updateCurrentUserProfile,
 } from './api';
-import { formatDateTime, mapCampaign, parseLocalDateTime } from './homeUtils';
+import { formatDateTime, getScenarioLabel, mapCampaign, parseLocalDateTime } from './homeUtils';
+
+const CAMPAIGN_STATUS_LABELS = {
+  OPEN: '開放加入',
+  FULL: '名額已滿',
+  DELIVERED: '已交付，等待確認',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+  HOST_NO_SHOW: '主揪未出現',
+  FAILED: '失敗',
+};
+
+function getCampaignStatusLabel(status) {
+  const key = (status ?? '').toString().toUpperCase();
+  return CAMPAIGN_STATUS_LABELS[key] ?? status ?? '--';
+}
 
 function formatJoinDate(value) {
   const date = parseLocalDateTime(value);
@@ -995,8 +1010,8 @@ function UserProfilePage() {
                 </div>
                 <div className="user-profile-campaign-copy">
                   <h3>{campaign.itemName}</h3>
-                  <p>狀態：{campaign.status ?? '--'}</p>
-                  <p>類型：{campaign.scenarioType ?? '--'}</p>
+                  <p>狀態：{getCampaignStatusLabel(campaign.status)}</p>
+                  <p>類型：{getScenarioLabel(campaign.scenarioType)}</p>
                   <p>單價：NT$ {campaign.pricePerUnit ?? '--'}</p>
                   <p>剩餘數量：{campaign.availableQuantity ?? '--'}</p>
                   <p>店面名稱：{campaign.storeName || '--'}</p>

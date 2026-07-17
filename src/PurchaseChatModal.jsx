@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import {
+  confirmPurchaseOrderAsRequester,
+  confirmPurchaseOrderAsRunner,
+  fetchPurchaseOrder,
   fetchPurchaseOrderMessages,
   getBackendBaseUrl,
   markPurchaseChatRoomRead,
@@ -63,12 +66,31 @@ function splitImageContent(content) {
     .map(resolveFileUrl);
 }
 
+function getOrderUserId(order, role) {
+  return order?.[`${role}Id`] ?? order?.[`${role}_id`] ?? order?.[role]?.id ?? null;
+}
+
+function getOrderStatus(order) {
+  return (order?.status ?? order?.orderStatus ?? order?.order_status ?? '').toString().toUpperCase();
+}
+
+function getOrderAvailableActions(order) {
+  return Array.isArray(order?.availableActions)
+    ? order.availableActions
+    : Array.isArray(order?.available_actions)
+      ? order.available_actions
+      : [];
+}
+
 function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }) {
   const [messages, setMessages] = useState(null);
+  const [order, setOrder] = useState(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [orderMessage, setOrderMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [gallery, setGallery] = useState({ isOpen: false, images: [], activeIndex: 0 });
   const bodyRef = useRef(null);
@@ -76,6 +98,17 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
   const roomId = room?.id;
   const orderId = room?.orderId;
   const isReadOnly = Boolean(room?.readOnly);
+  const isRequester = String(getOrderUserId(order, 'requester')) === String(currentUser?.id);
+  const isRunner = String(getOrderUserId(order, 'runner')) === String(currentUser?.id);
+  const orderStatus = getOrderStatus(order);
+  const availableActions = getOrderAvailableActions(order);
+  const canConfirmOrder =
+    !isReadOnly &&
+    orderId != null &&
+    (availableActions.includes('CONFIRM') ||
+      (orderStatus === 'WAITING_CONFIRMATION' &&
+        ((isRequester && !order?.requesterConfirmedAt && !order?.requester_confirmed_at) ||
+          (isRunner && !order?.runnerConfirmedAt && !order?.runner_confirmed_at))));
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
 
   useEffect(() => {
@@ -83,13 +116,20 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
 
     let cancelled = false;
     setMessages(null);
+    setOrder(null);
     setError('');
+    setOrderMessage('');
     setDraft('');
 
-    Promise.all([fetchPurchaseOrderMessages(orderId, token), markPurchaseChatRoomRead(roomId, token)])
-      .then(([data]) => {
+    Promise.all([
+      fetchPurchaseOrderMessages(orderId, token),
+      fetchPurchaseOrder(orderId, token).catch(() => null),
+      markPurchaseChatRoomRead(roomId, token),
+    ])
+      .then(([data, orderData]) => {
         if (cancelled) return;
         setMessages(Array.isArray(data) ? data.map(normalizeMessage) : []);
+        setOrder(orderData);
         onRead?.(roomId);
       })
       .catch((nextError) => {
@@ -174,6 +214,24 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
     }
   };
 
+  const handleConfirmOrder = async () => {
+    if (!canConfirmOrder || isConfirming) return;
+    setIsConfirming(true);
+    setError('');
+    setOrderMessage('');
+    try {
+      const response = isRequester
+        ? await confirmPurchaseOrderAsRequester(orderId, token)
+        : await confirmPurchaseOrderAsRunner(orderId, token);
+      setOrder(response);
+      setOrderMessage(getOrderStatus(response) === 'CONFIRMED' ? '雙方已確認，訂單可開始處理。' : '已送出確認，等待對方確認。');
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '交易確認失敗');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   const handleSend = async () => {
     const content = draft.trim();
     if (!content || isSending) return;
@@ -215,6 +273,22 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
           </div>
           <button type="button" className="modal-close" onClick={onClose}>關閉</button>
         </div>
+
+        {(canConfirmOrder || orderMessage) && (
+          <div className="chat-status-row purchase-chat-order-status">
+            <span>{orderMessage || '雙方都需要確認後，託購訂單才會進入後續流程。'}</span>
+            {canConfirmOrder && (
+              <button
+                type="button"
+                className="chat-status-action deliver-status-action"
+                onClick={() => void handleConfirmOrder()}
+                disabled={isConfirming}
+              >
+                {isConfirming ? '確認中...' : '確認交易'}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="chat-message-list" ref={bodyRef}>
           {messages == null && <p className="muted-copy">載入訊息中...</p>}

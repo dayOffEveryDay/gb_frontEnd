@@ -25,6 +25,11 @@ const PROFILE_TYPE_LABELS = {
   STORE_TO_STORE: '店到店',
 };
 
+function getProfileTypeLabel(profileType) {
+  const key = (profileType ?? '').toString().toUpperCase();
+  return PROFILE_TYPE_LABELS[key] ?? profileType ?? '--';
+}
+
 const LOCATION_TYPES = ['CUSTOM', 'LANDMARK', 'TRANSIT_RANGE', 'ROAD', 'DISTRICT', 'ADDRESS', 'STORE'];
 
 function toForm(profile) {
@@ -145,7 +150,7 @@ function PurchaseDeliveryProfilesModal({ isOpen, token, onChanged, onClose }) {
             <article key={profile.id} className="delivery-profile-row">
               <div>
                 <strong>{profile.label || profile.displayText}</strong>
-                <span>{PROFILE_TYPE_LABELS[profile.profileType] ?? profile.profileType} · {profile.displayText}</span>
+                <span>{getProfileTypeLabel(profile.profileType)} · {profile.displayText}</span>
               </div>
               <div className="delivery-profile-row-actions">
                 <button type="button" className="text-button" onClick={() => { setEditingId(profile.id); setForm(toForm(profile)); }}>編輯</button>
