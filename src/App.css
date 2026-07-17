@@ -3270,7 +3270,7 @@
 
 .deal-full-stamp {
   position: absolute;
-  top: 14px;
+  top: 70px;
   right: 18px;
   z-index: 6;
   display: inline-flex;
@@ -3397,17 +3397,11 @@
 }
 
 .deal-tag-actions {
-  position: relative;
-  z-index: 8;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
-}
-
-.deal-tag-actions .chat-action-button {
-  box-shadow: 0 0 0 4px var(--surface-elevated);
 }
 
 .type-pill {
@@ -6434,7 +6428,7 @@
   }
 
   .deal-full-stamp {
-    top: 12px;
+    top: 68px;
     right: 14px;
   }
 
