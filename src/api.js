@@ -530,20 +530,22 @@ export function createPurchaseRequestQuote(requestId, payload, token) {
   });
 }
 
-export function updatePurchaseRequestQuote(requestId, quoteId, payload, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}`, {
+export function updatePurchaseRequestQuote(quoteId, payload, token) {
+  return request(`/api/v1/purchase-quotes/${quoteId}`, {
     method: 'PUT',
     body: payload,
     token,
   });
 }
 
-export function cancelPurchaseRequestQuote(requestId, quoteId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}/cancel`, {
+export function withdrawPurchaseRequestQuote(quoteId, token) {
+  return request(`/api/v1/purchase-quotes/${quoteId}/withdraw`, {
     method: 'POST',
     token,
   });
 }
+
+export const cancelPurchaseRequestQuote = (_requestId, quoteId, token) => withdrawPurchaseRequestQuote(quoteId, token);
 
 export function fetchPurchaseRequestQuotes(requestId, token) {
   return request(`/api/v1/purchase-requests/${requestId}/quotes`, {
@@ -551,29 +553,118 @@ export function fetchPurchaseRequestQuotes(requestId, token) {
   });
 }
 
-export function fetchMyPurchaseRequestQuote(requestId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/quotes/me`, {
+export function fetchMyPurchaseRequestQuotes(params, token) {
+  return request('/api/v1/purchase-quotes/me', {
+    query: params,
     token,
   });
 }
 
-export function acceptPurchaseRequestQuote(requestId, quoteId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/quotes/${quoteId}/accept`, {
+export function acceptPurchaseRequestQuote(_requestId, quoteId, token) {
+  return request(`/api/v1/purchase-quotes/${quoteId}/select`, {
     method: 'POST',
     token,
   });
 }
 
-export function deliverPurchaseRequest(requestId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/deliver`, {
+export function fetchPurchaseOrders(params, token) {
+  return request('/api/v1/purchase-orders', {
+    query: params,
+    token,
+  });
+}
+
+export function fetchPurchaseOrder(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}`, {
+    token,
+  });
+}
+
+export function confirmPurchaseOrderAsRequester(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/confirm/requester`, {
     method: 'POST',
     token,
   });
 }
 
-export function completePurchaseRequest(requestId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/complete`, {
+export function confirmPurchaseOrderAsRunner(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/confirm/runner`, {
     method: 'POST',
+    token,
+  });
+}
+
+export function startPurchaseOrder(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/start`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function markPurchaseOrderItemUnavailable(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/item-unavailable`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function cancelPurchaseOrderAsRequester(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/cancel/requester`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function cancelPurchaseOrderAsRunner(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/cancel/runner`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function shipPurchaseOrder(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/ship`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function deliverPurchaseOrder(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/deliver`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function completePurchaseOrder(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/complete`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function reportPurchaseOrderAbnormal(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/abnormal/report`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function respondPurchaseOrderAbnormal(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/abnormal/respond`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function fetchPurchaseOrderEvents(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/events`, {
     token,
   });
 }
@@ -632,36 +723,98 @@ export function fetchMyCreatedPurchaseRequests(params, token) {
 }
 
 export function fetchMyAssignedPurchaseRequests(params, token) {
-  return request('/api/v1/purchase-requests/my-assigned', {
-    query: params,
-    token,
-  });
+  return fetchPurchaseOrders({ ...params, role: 'RUNNER' }, token);
 }
 
 export function fetchMyQuotedPurchaseRequests(params, token) {
-  return request('/api/v1/purchase-requests/my-quotes', {
-    query: params,
-    token,
-  });
+  return fetchMyPurchaseRequestQuotes(params, token);
 }
 
-export function createPurchaseRequestReview(requestId, payload, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/reviews`, {
+export function createPurchaseOrderReview(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/reviews`, {
     method: 'POST',
     body: payload,
     token,
   });
 }
 
-export function checkPurchaseRequestReviewStatus(requestId, token) {
-  return request(`/api/v1/purchase-requests/${requestId}/reviews/status`, {
+export function checkPurchaseOrderReviewStatus(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/reviews/status`, {
     token,
   });
 }
 
-export function fetchMyReceivedPurchaseRequestReviews(params, token) {
-  return request('/api/v1/purchase-requests/me/received-reviews', {
+export function fetchMyReceivedPurchaseOrderReviews(params, token) {
+  return request('/api/v1/purchase-order-reviews/me/received', {
     query: params,
+    token,
+  });
+}
+
+export const createPurchaseRequestReview = createPurchaseOrderReview;
+
+export const checkPurchaseRequestReviewStatus = checkPurchaseOrderReviewStatus;
+
+export function fetchMyReceivedPurchaseRequestReviews(params, token) {
+  return fetchMyReceivedPurchaseOrderReviews(params, token);
+}
+
+export function fetchPurchaseChatRooms(token) {
+  return request('/api/v1/purchase-chat-rooms', {
+    token,
+  });
+}
+
+export function fetchPurchaseChatUnreadCount(token) {
+  return request('/api/v1/purchase-chat-rooms/unread-count', {
+    token,
+  });
+}
+
+export function markPurchaseChatRoomRead(roomId, token) {
+  return request(`/api/v1/purchase-chat-rooms/${roomId}/read`, {
+    method: 'POST',
+    token,
+  });
+}
+
+export function sendPurchaseChatRoomMessage(roomId, payload, token) {
+  return request(`/api/v1/purchase-chat-rooms/${roomId}/messages`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function fetchPurchaseOrderMessages(orderId, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/messages`, {
+    token,
+  });
+}
+
+export function sendPurchaseOrderMessage(orderId, payload, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/messages`, {
+    method: 'POST',
+    body: payload,
+    token,
+  });
+}
+
+export function sendPurchaseOrderImageMessages(orderId, imageUrls, token) {
+  return request(`/api/v1/purchase-orders/${orderId}/messages/images`, {
+    method: 'POST',
+    body: {
+      messageType: 'IMAGE',
+      content: Array.isArray(imageUrls) ? imageUrls.join(',') : imageUrls,
+    },
+    token,
+  });
+}
+
+export function blockPurchaseUser(blockedUserId, token) {
+  return request('/api/v1/blocks', {
+    method: 'POST',
+    body: { blockedUserId },
     token,
   });
 }

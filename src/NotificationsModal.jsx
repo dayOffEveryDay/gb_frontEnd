@@ -21,7 +21,25 @@ function formatNotificationTime(value) {
 function getNotificationAction(notification, isReadTab) {
   const canOpenChat = notification.type === 'CAMPAIGN_FULL' && notification.referenceId != null;
   const canOpenReview = notification.type === 'CAMPAIGN_COMPLETED' && notification.referenceId != null;
-  const hasAction = canOpenChat || canOpenReview;
+  const canOpenPurchaseChat =
+    notification.referenceId != null &&
+    [
+      'PURCHASE_QUOTE_SELECTED',
+      'PURCHASE_ACCEPTED',
+      'PURCHASE_CHAT_MESSAGE',
+      'PURCHASE_ORDER_STARTED',
+      'PURCHASE_ITEM_UNAVAILABLE',
+      'PURCHASE_ORDER_CANCELLED',
+      'PURCHASE_ORDER_SHIPPED',
+      'PURCHASE_ORDER_DELIVERED',
+      'PURCHASE_ORDER_COMPLETED',
+      'PURCHASE_ORDER_AUTO_COMPLETED',
+      'PURCHASE_ABNORMAL_REPORTED',
+      'PURCHASE_ABNORMAL_CLOSED',
+      'PURCHASE_ABNORMAL_TIMEOUT',
+      'PURCHASE_CONFIRMATION_TIMEOUT',
+    ].includes(notification.type);
+  const hasAction = canOpenChat || canOpenReview || canOpenPurchaseChat;
 
   if (!hasAction && isReadTab) {
     return null;
@@ -30,6 +48,7 @@ function getNotificationAction(notification, isReadTab) {
   return {
     canOpenChat,
     canOpenReview,
+    canOpenPurchaseChat,
     hasAction,
     label: hasAction ? '前往' : '標為已讀',
   };

@@ -1,25 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   acceptPurchaseRequest,
+  addPurchaseRequestImages,
   acceptPurchaseRequestQuote,
   cancelPurchaseRequest,
   checkPurchaseRequestReviewStatus,
-  completePurchaseRequest,
+  completePurchaseOrder,
   createPurchaseRequest,
   createPurchaseRequestQuote,
   createPurchaseRequestReview,
-  deliverPurchaseRequest,
+  deliverPurchaseOrder,
+  deletePurchaseRequestImage,
   extendPurchaseRequest,
   fetchMyAssignedPurchaseRequests,
   fetchMyCreatedPurchaseRequests,
   fetchMyQuotedPurchaseRequests,
+  fetchMyReceivedPurchaseOrderReviews,
+  fetchPurchaseOrders,
   fetchPurchaseRequestQuotes,
   fetchPurchaseRequests,
+  fetchUserDeliveryProfiles,
   uploadFiles,
+  updatePurchaseRequest,
+  updatePurchaseRequestQuote,
   updatePurchaseRequestImageOrder,
+  withdrawPurchaseRequestQuote,
 } from './api';
 import { formatDateTime } from './homeUtils';
 import ImageGalleryModal from './ImageGalleryModal';
+import PurchaseOrderModal from './PurchaseOrderModal';
+import PurchaseDeliveryProfilesModal from './PurchaseDeliveryProfilesModal';
 import { DiagonalExpandIcon } from './Icons';
 
 const PAGE_SIZE = 20;
@@ -36,6 +46,8 @@ const SCOPE_OPTIONS = [
   { value: 'QUOTED', label: '我報價' },
 ];
 
+// 此設定同時提供首頁「我的託購」頁籤使用。
+// eslint-disable-next-line react-refresh/only-export-components
 export const MY_PURCHASE_REQUEST_SCOPE_OPTIONS = [
   { value: 'MY_ALL', label: '全部' },
   { value: 'CREATED', label: '我的委託' },
@@ -55,6 +67,20 @@ const STATUS_LABELS = {
   ORDERED: '已成立',
   CANCELLED: '已取消',
   EXPIRED: '已過期',
+  WAITING_CONFIRMATION: '等待確認',
+  CONFIRMED: '已確認',
+  IN_PROGRESS: '處理中',
+  SHIPPED: '已寄出',
+  DELIVERED_PENDING_CONFIRM: '待委託人確認',
+  COMPLETED: '已完成',
+  UNAVAILABLE_CANCELLED: '缺貨取消',
+  ABNORMAL_PENDING_RESPONSE: '異常待回應',
+  PENALIZED_CANCELLED: '有責取消',
+  DISPUTE_CLOSED_NO_PENALTY: '異常已結案',
+  ACTIVE: '有效報價',
+  WITHDRAWN: '已撤回',
+  SELECTED: '已選定',
+  NOT_SELECTED: '未選定',
 };
 
 const STATUS_OPTIONS = [
@@ -81,6 +107,7 @@ const INITIAL_FORM = {
   receiverName: '',
   receiverPhone: '',
   addressDetail: '',
+  selectedProfileIds: [],
   images: [],
 };
 
@@ -150,20 +177,114 @@ function normalizePurchaseRequest(item) {
   };
 }
 
+function normalizePurchaseOrderSummary(order) {
+  const request = order?.purchaseRequest ?? order?.purchase_request ?? {};
+  const merged = {
+    ...request,
+    ...order,
+    id: order?.purchaseRequestId ?? order?.purchase_request_id ?? request?.id ?? order?.id,
+    itemName: order?.itemName ?? order?.item_name ?? request?.itemName ?? request?.item_name,
+    imageUrls: order?.imageUrls ?? order?.image_urls ?? request?.imageUrls ?? request?.image_urls,
+    rewardType: order?.rewardType ?? order?.reward_type ?? request?.rewardType ?? request?.reward_type,
+    fixedRewardAmount:
+      order?.fixedRewardAmount ??
+      order?.fixed_reward_amount ??
+      order?.rewardAmount ??
+      order?.reward_amount ??
+      request?.fixedRewardAmount ??
+      request?.fixed_reward_amount,
+    requesterId: order?.requesterId ?? order?.requester_id ?? request?.requesterId ?? request?.requester_id,
+    requesterDisplayName:
+      order?.requesterDisplayName ??
+      order?.requester_display_name ??
+      request?.requesterDisplayName ??
+      request?.requester_display_name,
+    requesterProfileImageUrl:
+      order?.requesterProfileImageUrl ??
+      order?.requester_profile_image_url ??
+      request?.requesterProfileImageUrl ??
+      request?.requester_profile_image_url,
+    requesterCreditScore:
+      order?.requesterCreditScore ??
+      order?.requester_credit_score ??
+      request?.requesterCreditScore ??
+      request?.requester_credit_score,
+    deliveryMethod: order?.deliveryMethod ?? order?.delivery_method ?? request?.deliveryMethod ?? request?.delivery_method,
+    deliveryPublicSummary:
+      order?.deliveryPublicSummary ??
+      order?.delivery_public_summary ??
+      request?.deliveryPublicSummary ??
+      request?.delivery_public_summary,
+    requesterCity: order?.requesterCity ?? order?.requester_city ?? request?.requesterCity ?? request?.requester_city,
+    requesterDistrict:
+      order?.requesterDistrict ?? order?.requester_district ?? request?.requesterDistrict ?? request?.requester_district,
+    requestExpireTime:
+      order?.requestExpireTime ?? order?.request_expire_time ?? request?.requestExpireTime ?? request?.request_expire_time,
+    deliveryDeadlineHours:
+      order?.deliveryDeadlineHours ??
+      order?.delivery_deadline_hours ??
+      request?.deliveryDeadlineHours ??
+      request?.delivery_deadline_hours,
+    status: order?.status ?? order?.orderStatus ?? order?.order_status ?? request?.status,
+  };
+  const normalized = normalizePurchaseRequest(merged);
+
+  return {
+    ...normalized,
+    orderId: order?.id ?? order?.orderId ?? order?.order_id ?? null,
+    orderStatus: (order?.status ?? order?.orderStatus ?? order?.order_status ?? '').toString().toUpperCase(),
+    runner: normalizeUserSummary(
+      order?.runner ?? {
+        id: order?.runnerId ?? order?.runner_id,
+        displayName: order?.runnerDisplayName ?? order?.runner_display_name,
+        profileImageUrl: order?.runnerProfileImageUrl ?? order?.runner_profile_image_url,
+        creditScore: order?.runnerCreditScore ?? order?.runner_credit_score,
+      }
+    ),
+    selectedQuoteId: order?.selectedQuoteId ?? order?.selected_quote_id ?? null,
+    deliveryDeadlineAt: order?.deliveryDeadlineAt ?? order?.delivery_deadline_at ?? '',
+  };
+}
+
 function normalizeQuote(quote) {
   return {
     id: quote?.id,
     purchaseRequestId: quote?.purchaseRequestId ?? quote?.purchase_request_id,
     quoteAmount: quote?.quoteAmount ?? quote?.quote_amount ?? 0,
-    note: quote?.note ?? '',
+    note: quote?.quoteNote ?? quote?.quote_note ?? quote?.note ?? '',
     status: (quote?.status ?? 'PENDING').toString().toUpperCase(),
-    runner: normalizeUserSummary(quote?.runner),
+    runner: normalizeUserSummary(
+      quote?.runner ?? {
+        id: quote?.quoterId ?? quote?.quoter_id,
+        displayName: quote?.quoterDisplayName ?? quote?.quoter_display_name,
+        profileImageUrl: quote?.quoterProfileImageUrl ?? quote?.quoter_profile_image_url,
+        creditScore: quote?.quoterCreditScore ?? quote?.quoter_credit_score,
+      }
+    ),
     createdAt: quote?.createdAt ?? quote?.created_at ?? '',
   };
 }
 
-function normalizePageItems(data) {
-  return Array.isArray(data?.content) ? data.content.map(normalizePurchaseRequest) : [];
+function normalizeQuoteAsPurchaseRequest(quote) {
+  const normalizedQuote = normalizeQuote(quote);
+
+  return {
+    ...normalizePurchaseRequest({
+      ...quote,
+      id: normalizedQuote.purchaseRequestId,
+      itemName: quote?.itemName ?? quote?.item_name,
+      status: normalizedQuote.status,
+      rewardType: 'QUOTE',
+    }),
+    quoteId: normalizedQuote.id,
+    quoteStatus: normalizedQuote.status,
+    quoteAmount: normalizedQuote.quoteAmount,
+    quoteNote: normalizedQuote.note,
+  };
+}
+
+function normalizePageItems(data, mapper = normalizePurchaseRequest) {
+  return Array.isArray(data?.content) ? data.content.map(mapper) : [];
 }
 
 function dedupePurchaseRequests(items) {
@@ -229,9 +350,12 @@ function getBlockedLabel(reason) {
   return '';
 }
 
-function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSubmit }) {
+function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClose, onSubmit }) {
   const [form, setForm] = useState(INITIAL_FORM);
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
+  const [deliveryProfiles, setDeliveryProfiles] = useState([]);
+  const [isDeliveryProfilesOpen, setIsDeliveryProfilesOpen] = useState(false);
+  const [deliveryProfileError, setDeliveryProfileError] = useState('');
   const previewTouchStartXRef = useRef(null);
 
   const imagePreviews = useMemo(
@@ -250,21 +374,29 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
     };
   }, [imagePreviews]);
 
-  useEffect(() => {
-    if (imagePreviews.length === 0) {
-      setActivePreviewIndex(0);
-      return;
+  const loadDeliveryProfiles = useCallback(async () => {
+    if (!isOpen || !token) return;
+    setDeliveryProfileError('');
+    try {
+      const data = await fetchUserDeliveryProfiles('FACE_TO_FACE', token);
+      setDeliveryProfiles(Array.isArray(data) ? data : []);
+    } catch (nextError) {
+      setDeliveryProfileError(nextError instanceof Error ? nextError.message : '常用交付資料載入失敗');
     }
-
-    setActivePreviewIndex((current) => Math.min(current, imagePreviews.length - 1));
-  }, [imagePreviews.length]);
+  }, [isOpen, token]);
 
   useEffect(() => {
-    if (isOpen) {
-      setForm(INITIAL_FORM);
-      setActivePreviewIndex(0);
-    }
-  }, [isOpen]);
+    if (!isOpen || !token) return undefined;
+    let cancelled = false;
+    fetchUserDeliveryProfiles('FACE_TO_FACE', token)
+      .then((data) => {
+        if (!cancelled) setDeliveryProfiles(Array.isArray(data) ? data : []);
+      })
+      .catch((nextError) => {
+        if (!cancelled) setDeliveryProfileError(nextError instanceof Error ? nextError.message : '常用交付資料載入失敗');
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, token]);
 
   if (!isOpen) {
     return null;
@@ -600,6 +732,44 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
             />
           </label>
 
+          {form.deliveryMethod === 'FACE_TO_FACE' && (
+            <section className="delivery-profile-picker">
+              <div className="delivery-profile-picker-header">
+                <strong>常用面交資料</strong>
+                <button type="button" className="text-button" onClick={() => setIsDeliveryProfilesOpen(true)}>
+                  管理常用資料
+                </button>
+              </div>
+              {deliveryProfiles.length === 0 ? (
+                <p className="field-hint">可建立常用捷運範圍、地標或面交地點。</p>
+              ) : (
+                <div className="delivery-profile-picker-options">
+                  {deliveryProfiles.map((profile) => {
+                    const checked = form.selectedProfileIds.includes(profile.id);
+                    return (
+                      <label key={profile.id} className="market-checkbox-filter">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            updateField(
+                              'selectedProfileIds',
+                              event.target.checked
+                                ? [...form.selectedProfileIds, profile.id]
+                                : form.selectedProfileIds.filter((id) => String(id) !== String(profile.id))
+                            )
+                          }
+                        />
+                        <span>{profile.label || profile.displayText}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {deliveryProfileError && <p className="inline-error">{deliveryProfileError}</p>}
+            </section>
+          )}
+
           {form.deliveryMethod !== 'FACE_TO_FACE' && (
             <>
               <div className="purchase-request-two-col">
@@ -655,6 +825,12 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
             </button>
           </div>
         </form>
+        <PurchaseDeliveryProfilesModal
+          isOpen={isDeliveryProfilesOpen}
+          token={token}
+          onChanged={loadDeliveryProfiles}
+          onClose={() => setIsDeliveryProfilesOpen(false)}
+        />
       </div>
     </div>
   );
@@ -663,13 +839,6 @@ function PurchaseRequestCreateModal({ isOpen, isSubmitting, error, onClose, onSu
 function PurchaseRequestReviewModal({ request, isSubmitting, error, onClose, onSubmit }) {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
-
-  useEffect(() => {
-    if (request) {
-      setRating(5);
-      setComment('');
-    }
-  }, [request]);
 
   if (!request) {
     return null;
@@ -721,6 +890,49 @@ function PurchaseRequestReviewModal({ request, isSubmitting, error, onClose, onS
   );
 }
 
+function PurchaseReceivedReviewsModal({ isOpen, token, onClose }) {
+  const [reviews, setReviews] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isOpen || !token) return undefined;
+    let cancelled = false;
+    fetchMyReceivedPurchaseOrderReviews({ page: 0, size: 100 }, token)
+      .then((data) => {
+        if (!cancelled) setReviews(Array.isArray(data?.content) ? data.content : []);
+      })
+      .catch((nextError) => {
+        if (!cancelled) setError(nextError instanceof Error ? nextError.message : '評價載入失敗');
+      })
+    return () => { cancelled = true; };
+  }, [isOpen, token]);
+
+  if (!isOpen) return null;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="login-modal purchase-received-reviews-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-top-row">
+          <div><p className="eyebrow">託購信用紀錄</p><h2 className="modal-title">收到的評價</h2></div>
+          <button type="button" className="modal-close" onClick={onClose}>關閉</button>
+        </div>
+        {reviews == null && <p className="muted-copy">載入評價中...</p>}
+        {error && <p className="inline-error">{error}</p>}
+        {reviews != null && !error && reviews.length === 0 && <p className="muted-copy">目前沒有收到的託購評價。</p>}
+        <div className="purchase-received-review-list">
+          {(reviews ?? []).map((review) => (
+            <article key={review.id}>
+              <div><strong>{review.itemName || `訂單 #${review.orderId}`}</strong><span>{'★'.repeat(Math.max(0, Math.min(5, Number(review.rating) || 0)))}</span></div>
+              <span>{review.reviewerName || '交易對象'} · {formatDateTime(review.createdAt)}</span>
+              {review.comment && <p>{review.comment}</p>}
+              <small>{review.isScoreCounted ? '已計入信用分' : '未計入信用分'}</small>
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PurchaseRequestCancelConfirmModal({ request, isSubmitting, onClose, onConfirm }) {
   if (!request) {
     return null;
@@ -752,16 +964,11 @@ function PurchaseRequestCancelConfirmModal({ request, isSubmitting, onClose, onC
   );
 }
 
-function PurchaseRequestQuoteModal({ request, isSubmitting, error, onClose, onSubmit }) {
-  const [quoteAmount, setQuoteAmount] = useState('');
-  const [note, setNote] = useState('');
-
-  useEffect(() => {
-    if (request) {
-      setQuoteAmount('');
-      setNote('');
-    }
-  }, [request]);
+function PurchaseRequestQuoteModal({ request, initialQuote = null, isSubmitting, error, onClose, onSubmit }) {
+  const [quoteAmount, setQuoteAmount] = useState(() =>
+    initialQuote?.quoteAmount == null ? '' : String(initialQuote.quoteAmount)
+  );
+  const [note, setNote] = useState(() => initialQuote?.quoteNote ?? initialQuote?.note ?? '');
 
   if (!request) {
     return null;
@@ -771,7 +978,7 @@ function PurchaseRequestQuoteModal({ request, isSubmitting, error, onClose, onSu
     <div className="modal-backdrop" onClick={onClose}>
       <div className="login-modal purchase-quote-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-top-row">
-          <p className="eyebrow">委託報價</p>
+          <p className="eyebrow">{initialQuote ? '修改報價' : '委託報價'}</p>
           <button type="button" className="modal-close" onClick={onClose} disabled={isSubmitting}>
             關閉
           </button>
@@ -811,8 +1018,80 @@ function PurchaseRequestQuoteModal({ request, isSubmitting, error, onClose, onSu
               取消
             </button>
             <button type="submit" className="create-button active" disabled={isSubmitting}>
-              {isSubmitting ? '送出中...' : '送出報價'}
+              {isSubmitting ? '送出中...' : initialQuote ? '儲存報價' : '送出報價'}
             </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PurchaseRequestEditModal({ request, isSubmitting, error, onClose, onSubmit }) {
+  const [form, setForm] = useState(() =>
+    request
+      ? {
+      itemName: request.productName ?? '',
+      itemDescription: request.description ?? '',
+      fixedRewardAmount: request.fixedRewardAmount == null ? '' : String(request.fixedRewardAmount),
+      deliveryPublicSummary: request.deliveryPublicSummary ?? '',
+      requestExpireTime: request.deadlineAt ? String(request.deadlineAt).slice(0, 16) : '',
+      deliveryDeadlineHours: request.deliveryDeadlineHours == null ? '' : String(request.deliveryDeadlineHours),
+      minCreditScore: request.minCreditScore == null ? '' : String(request.minCreditScore),
+        }
+      : null
+  );
+
+  if (!request || !form) return null;
+  const deadlineOnly = request.status === 'QUOTING';
+  const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="login-modal purchase-request-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-top-row">
+          <p className="eyebrow">編輯委託</p>
+          <button type="button" className="modal-close" onClick={onClose} disabled={isSubmitting}>關閉</button>
+        </div>
+        <h2 className="modal-title">{request.productName}</h2>
+        {deadlineOnly && <p className="panel-note">已有有效報價，目前只能延後委託期限。</p>}
+        <form className="purchase-request-form" onSubmit={(event) => { event.preventDefault(); onSubmit(request, form); }}>
+          <label className="form-field">
+            <span>商品名稱</span>
+            <input value={form.itemName} onChange={(event) => updateField('itemName', event.target.value)} disabled={deadlineOnly} required />
+          </label>
+          <label className="form-field">
+            <span>商品說明</span>
+            <textarea rows="3" value={form.itemDescription} onChange={(event) => updateField('itemDescription', event.target.value)} disabled={deadlineOnly} />
+          </label>
+          {request.rewardType === 'FIXED' && (
+            <label className="form-field">
+              <span>固定酬金</span>
+              <input type="number" min="1" value={form.fixedRewardAmount} onChange={(event) => updateField('fixedRewardAmount', event.target.value)} disabled={deadlineOnly} required />
+            </label>
+          )}
+          <label className="form-field">
+            <span>公開交付摘要</span>
+            <input value={form.deliveryPublicSummary} onChange={(event) => updateField('deliveryPublicSummary', event.target.value)} disabled={deadlineOnly} required />
+          </label>
+          <div className="purchase-request-form-grid">
+            <label className="form-field">
+              <span>委託期限</span>
+              <input type="datetime-local" value={form.requestExpireTime} onChange={(event) => updateField('requestExpireTime', event.target.value)} required />
+            </label>
+            <label className="form-field">
+              <span>成立後交付時數</span>
+              <input type="number" min="1" value={form.deliveryDeadlineHours} onChange={(event) => updateField('deliveryDeadlineHours', event.target.value)} disabled={deadlineOnly} required />
+            </label>
+            <label className="form-field">
+              <span>最低信用分</span>
+              <input type="number" min="0" value={form.minCreditScore} onChange={(event) => updateField('minCreditScore', event.target.value)} disabled={deadlineOnly} />
+            </label>
+          </div>
+          {error && <p className="inline-error">{error}</p>}
+          <div className="purchase-request-submit-row">
+            <button type="button" className="text-button" onClick={onClose} disabled={isSubmitting}>取消</button>
+            <button type="submit" className="create-button active" disabled={isSubmitting}>{isSubmitting ? '儲存中...' : '儲存變更'}</button>
           </div>
         </form>
       </div>
@@ -837,30 +1116,46 @@ function PurchaseRequestCard({
   onCancel,
   onExtend,
   onReview,
+  onOpenOrder,
+  onOpenChat,
+  onEditOwnQuote,
+  onWithdrawOwnQuote,
+  onEditRequest,
   onManageImages,
   onRequireLogin,
   onExpand,
 }) {
   const isRequester = isSameUser(request.requester?.id, currentUser?.id);
-  const isRunner = isSameUser(request.assignedRunner?.id, currentUser?.id);
+  const isRunner = isSameUser(request.assignedRunner?.id ?? request.runner?.id, currentUser?.id);
+  const cardStatus = request.orderStatus || request.status;
   const image = request.imageUrls[0] ?? '';
   const blockedLabel = getBlockedLabel(request.actBlockedReason);
   const isBusy = actionId === request.id;
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const canViewQuotes = isRequester && request.rewardType === 'QUOTE' && ['OPEN', 'QUOTING'].includes(request.status);
-  const canManageImages = isRequester && request.status === 'OPEN' && request.imageUrls.length > 1;
+  const canManageImages = isRequester && request.status === 'OPEN';
   const canCancelRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
   const canExtendRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
   const canQuoteRequest =
     currentUser && ['OPEN', 'QUOTING'].includes(request.status) && request.rewardType === 'QUOTE' && !isRequester;
-  const hasActionMenu = canViewQuotes || canManageImages || canCancelRequest || canExtendRequest;
+  const canDeliverOrder = isRunner && request.orderId != null && cardStatus === 'IN_PROGRESS' && request.deliveryMethod === 'FACE_TO_FACE';
+  const canCompleteOrder =
+    isRequester &&
+    request.orderId != null &&
+    ['IN_PROGRESS', 'SHIPPED', 'DELIVERED_PENDING_CONFIRM'].includes(cardStatus);
+  const canReviewOrder = currentUser && (isRequester || isRunner) && request.orderId != null && cardStatus === 'COMPLETED';
+  const canOpenOrder = currentUser && (isRequester || isRunner) && request.orderId != null;
+  const canOpenChat = canOpenOrder && request.chatRoomId != null;
+  const canManageOwnQuote = request.quoteId != null && request.quoteStatus === 'ACTIVE';
+  const canEditRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
+  const hasActionMenu = canViewQuotes || canManageImages || canCancelRequest || canExtendRequest || canOpenOrder || canManageOwnQuote || canEditRequest;
   const hasInlineActions =
     (!currentUser && request.status === 'OPEN') ||
     (currentUser && request.status === 'OPEN' && request.rewardType === 'FIXED' && !isRequester) ||
     canQuoteRequest ||
-    (isRunner && request.status === 'ASSIGNED') ||
-    (isRequester && ['ASSIGNED', 'DELIVERED'].includes(request.status)) ||
-    (currentUser && (isRequester || isRunner) && request.status === 'COMPLETED');
+    canDeliverOrder ||
+    canCompleteOrder ||
+    canReviewOrder;
 
   if (viewMode === 'compact') {
     const requesterName = request.requester?.displayName ?? '--';
@@ -900,6 +1195,31 @@ function PurchaseRequestCard({
                     }}
                   >
                     {isQuotesOpen ? '收合報價' : `查看報價 ${request.quoteCount}`}
+                  </button>
+                )}
+                {canOpenOrder && (
+                  <button type="button" onClick={() => { onOpenOrder(request); setIsActionMenuOpen(false); }}>
+                    訂單詳情
+                  </button>
+                )}
+                {canOpenChat && (
+                  <button type="button" onClick={() => { onOpenChat(request); setIsActionMenuOpen(false); }}>
+                    開啟聊天室
+                  </button>
+                )}
+                {canManageOwnQuote && (
+                  <button type="button" onClick={() => { onEditOwnQuote(request); setIsActionMenuOpen(false); }}>
+                    修改報價
+                  </button>
+                )}
+                {canEditRequest && (
+                  <button type="button" onClick={() => { onEditRequest(request); setIsActionMenuOpen(false); }}>
+                    編輯委託
+                  </button>
+                )}
+                {canManageOwnQuote && (
+                  <button type="button" className="danger" onClick={() => { onWithdrawOwnQuote(request); setIsActionMenuOpen(false); }} disabled={isBusy}>
+                    撤回報價
                   </button>
                 )}
                 {canManageImages && (
@@ -961,8 +1281,8 @@ function PurchaseRequestCard({
         <div className="compact-market-main purchase-request-compact-main">
           <div className="compact-market-title-row">
             <strong className="compact-market-title">{request.productName}</strong>
-            <span className={`compact-market-type purchase-request-compact-status ${request.status.toLowerCase()}`}>
-              {STATUS_LABELS[request.status] ?? request.status}
+            <span className={`compact-market-type purchase-request-compact-status ${cardStatus.toLowerCase()}`}>
+              {STATUS_LABELS[cardStatus] ?? cardStatus}
             </span>
           </div>
           <div className="compact-market-meta">
@@ -1096,6 +1416,31 @@ function PurchaseRequestCard({
                   {isQuotesOpen ? '收合報價' : `查看報價 ${request.quoteCount}`}
                 </button>
               )}
+              {canOpenOrder && (
+                <button type="button" onClick={() => { onOpenOrder(request); setIsActionMenuOpen(false); }}>
+                  訂單詳情
+                </button>
+              )}
+              {canOpenChat && (
+                <button type="button" onClick={() => { onOpenChat(request); setIsActionMenuOpen(false); }}>
+                  開啟聊天室
+                </button>
+              )}
+              {canManageOwnQuote && (
+                <button type="button" onClick={() => { onEditOwnQuote(request); setIsActionMenuOpen(false); }}>
+                  修改報價
+                </button>
+              )}
+              {canEditRequest && (
+                <button type="button" onClick={() => { onEditRequest(request); setIsActionMenuOpen(false); }}>
+                  編輯委託
+                </button>
+              )}
+              {canManageOwnQuote && (
+                <button type="button" className="danger" onClick={() => { onWithdrawOwnQuote(request); setIsActionMenuOpen(false); }} disabled={isBusy}>
+                  撤回報價
+                </button>
+              )}
               {canManageImages && (
                 <button
                   type="button"
@@ -1166,8 +1511,8 @@ function PurchaseRequestCard({
       <div className="purchase-request-body">
         <div className="purchase-request-title-row">
           <h3>{request.productName}</h3>
-          <span className={`purchase-request-status ${request.status.toLowerCase()}`}>
-            {STATUS_LABELS[request.status] ?? request.status}
+          <span className={`purchase-request-status ${cardStatus.toLowerCase()}`}>
+            {STATUS_LABELS[cardStatus] ?? cardStatus}
           </span>
         </div>
 
@@ -1242,19 +1587,19 @@ function PurchaseRequestCard({
             </button>
           )}
 
-          {isRunner && request.status === 'ASSIGNED' && (
+          {canDeliverOrder && (
             <button type="button" className="create-button active" onClick={() => onDeliver(request)} disabled={isBusy}>
               {isBusy ? '處理中...' : '標記已交付'}
             </button>
           )}
 
-          {isRequester && ['ASSIGNED', 'DELIVERED'].includes(request.status) && (
+          {canCompleteOrder && (
             <button type="button" className="create-button active" onClick={() => onComplete(request)} disabled={isBusy}>
               {isBusy ? '處理中...' : '確認完成'}
             </button>
           )}
 
-          {currentUser && (isRequester || isRunner) && request.status === 'COMPLETED' && (
+          {canReviewOrder && (
             <button type="button" className="text-button" onClick={() => onReview(request)}>
               評價對方
             </button>
@@ -1277,9 +1622,9 @@ function PurchaseRequestCard({
                   type="button"
                   className="create-button active"
                   onClick={() => onAcceptQuote(request, quote)}
-                  disabled={quote.status !== 'PENDING' || isBusy}
+                  disabled={quote.status !== 'ACTIVE' || isBusy}
                 >
-                  {quote.status === 'PENDING' ? '委託' : STATUS_LABELS[quote.status] ?? quote.status}
+                  {quote.status === 'ACTIVE' ? '委託' : STATUS_LABELS[quote.status] ?? quote.status}
                 </button>
               </div>
             ))}
@@ -1305,6 +1650,7 @@ function PurchaseRequestsPanel({
   onModalOpenChange,
   onRequireLogin,
   onShowToast,
+  onOpenPurchaseChat,
 }) {
   const [scope, setScope] = useState(initialScope);
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -1316,6 +1662,7 @@ function PurchaseRequestsPanel({
   const [refreshKey, setRefreshKey] = useState(0);
   const [actionId, setActionId] = useState(null);
   const [quoteTarget, setQuoteTarget] = useState(null);
+  const [quoteEditTarget, setQuoteEditTarget] = useState(null);
   const [quoteSubmitError, setQuoteSubmitError] = useState('');
   const [openQuotesRequestId, setOpenQuotesRequestId] = useState(null);
   const [quotesByRequestId, setQuotesByRequestId] = useState({});
@@ -1323,7 +1670,11 @@ function PurchaseRequestsPanel({
   const [reviewTarget, setReviewTarget] = useState(null);
   const [reviewError, setReviewError] = useState('');
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isReceivedReviewsOpen, setIsReceivedReviewsOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [orderTarget, setOrderTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editError, setEditError] = useState('');
   const [expandedCompactRequestId, setExpandedCompactRequestId] = useState('');
   const [isScopeMenuOpen, setIsScopeMenuOpen] = useState(false);
   const [imageOrderState, setImageOrderState] = useState({
@@ -1358,16 +1709,18 @@ function PurchaseRequestsPanel({
           return;
         }
 
-        const [createdData, quotedData, assignedData] = await Promise.all([
+        const [createdData, requesterOrderData, quotedData, assignedData] = await Promise.all([
           fetchMyCreatedPurchaseRequests(query, token),
+          fetchPurchaseOrders({ ...query, role: 'REQUESTER' }, token),
           fetchMyQuotedPurchaseRequests(query, token),
           fetchMyAssignedPurchaseRequests(query, token),
         ]);
         setRequests(
           dedupePurchaseRequests([
+            ...normalizePageItems(requesterOrderData, normalizePurchaseOrderSummary),
             ...normalizePageItems(createdData),
-            ...normalizePageItems(quotedData),
-            ...normalizePageItems(assignedData),
+            ...normalizePageItems(quotedData, normalizeQuoteAsPurchaseRequest),
+            ...normalizePageItems(assignedData, normalizePurchaseOrderSummary),
           ])
         );
         return;
@@ -1379,7 +1732,17 @@ function PurchaseRequestsPanel({
           setError('請先登入查看我發起的託購。');
           return;
         }
-        data = await fetchMyCreatedPurchaseRequests(query, token);
+        const [createdData, requesterOrderData] = await Promise.all([
+          fetchMyCreatedPurchaseRequests(query, token),
+          fetchPurchaseOrders({ ...query, role: 'REQUESTER' }, token),
+        ]);
+        setRequests(
+          dedupePurchaseRequests([
+            ...normalizePageItems(requesterOrderData, normalizePurchaseOrderSummary),
+            ...normalizePageItems(createdData),
+          ])
+        );
+        return;
       } else if (scope === 'ASSIGNED') {
         if (!token) {
           setRequests([]);
@@ -1405,7 +1768,13 @@ function PurchaseRequestsPanel({
         );
       }
 
-      setRequests(normalizePageItems(data));
+      if (scope === 'ASSIGNED') {
+        setRequests(normalizePageItems(data, normalizePurchaseOrderSummary));
+      } else if (scope === 'QUOTED') {
+        setRequests(normalizePageItems(data, normalizeQuoteAsPurchaseRequest));
+      } else {
+        setRequests(normalizePageItems(data));
+      }
     } catch (loadError) {
       setError(loadError.message);
       setRequests([]);
@@ -1425,13 +1794,13 @@ function PurchaseRequestsPanel({
   }, [viewMode]);
 
   useEffect(() => {
-    const hasInternalModalOpen = Boolean(quoteTarget || reviewTarget || cancelTarget || imageOrderState.request);
+    const hasInternalModalOpen = Boolean(quoteTarget || quoteEditTarget || reviewTarget || cancelTarget || orderTarget || editTarget || isReceivedReviewsOpen || imageOrderState.request);
     onModalOpenChange?.(hasInternalModalOpen);
 
     return () => {
       onModalOpenChange?.(false);
     };
-  }, [cancelTarget, imageOrderState.request, onModalOpenChange, quoteTarget, reviewTarget]);
+  }, [cancelTarget, editTarget, imageOrderState.request, isReceivedReviewsOpen, onModalOpenChange, orderTarget, quoteEditTarget, quoteTarget, reviewTarget]);
 
   const refresh = () => setRefreshKey((current) => current + 1);
 
@@ -1525,6 +1894,7 @@ function PurchaseRequestsPanel({
                 },
               ]
             : undefined,
+          selectedProfileIds: isFaceToFace ? form.selectedProfileIds : undefined,
           saveManualToProfile: false,
           saveDeliveryToProfile: false,
         },
@@ -1562,7 +1932,7 @@ function PurchaseRequestsPanel({
         request.id,
         {
           quoteAmount: payload.quoteAmount,
-          note: payload.note,
+          quoteNote: payload.note,
         },
         token
       );
@@ -1571,6 +1941,77 @@ function PurchaseRequestsPanel({
       refresh();
     } catch (quoteError) {
       setQuoteSubmitError(quoteError instanceof Error ? quoteError.message : '報價送出失敗');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleUpdateQuote = async (request, payload) => {
+    if (!token || request.quoteId == null) {
+      setQuoteEditTarget(null);
+      onRequireLogin?.();
+      return;
+    }
+    if (!payload.quoteAmount) {
+      setQuoteSubmitError('請輸入報價金額');
+      return;
+    }
+
+    setActionId(request.id);
+    setQuoteSubmitError('');
+    try {
+      await updatePurchaseRequestQuote(
+        request.quoteId,
+        { quoteAmount: Number(payload.quoteAmount), quoteNote: payload.note?.trim() || undefined },
+        token
+      );
+      setQuoteEditTarget(null);
+      onShowToast?.({ title: '報價已更新', message: '新的報價內容已儲存。' });
+      refresh();
+    } catch (nextError) {
+      setQuoteSubmitError(nextError instanceof Error ? nextError.message : '報價更新失敗');
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const handleWithdrawQuote = async (request) => {
+    if (!window.confirm('撤回後不能再次建立同一筆委託的報價，確定撤回嗎？')) return;
+    await withAction(
+      request,
+      () => withdrawPurchaseRequestQuote(request.quoteId, token),
+      '報價已撤回。'
+    );
+  };
+
+  const handleUpdateRequest = async (request, form) => {
+    if (!token) {
+      setEditTarget(null);
+      onRequireLogin?.();
+      return;
+    }
+    const requestExpireTime = form.requestExpireTime.length === 16 ? `${form.requestExpireTime}:00` : form.requestExpireTime;
+    const payload = request.status === 'QUOTING'
+      ? { requestExpireTime }
+      : {
+          itemName: form.itemName.trim(),
+          itemDescription: form.itemDescription.trim() || undefined,
+          fixedRewardAmount: request.rewardType === 'FIXED' ? Number(form.fixedRewardAmount) : undefined,
+          deliveryPublicSummary: form.deliveryPublicSummary.trim(),
+          requestExpireTime,
+          deliveryDeadlineHours: Number(form.deliveryDeadlineHours),
+          minCreditScore: form.minCreditScore === '' ? 0 : Number(form.minCreditScore),
+        };
+
+    setActionId(request.id);
+    setEditError('');
+    try {
+      await updatePurchaseRequest(request.id, payload, token);
+      setEditTarget(null);
+      onShowToast?.({ title: '委託已更新', message: '委託內容已儲存。' });
+      refresh();
+    } catch (nextError) {
+      setEditError(nextError instanceof Error ? nextError.message : '委託更新失敗');
     } finally {
       setActionId(null);
     }
@@ -1603,10 +2044,6 @@ function PurchaseRequestsPanel({
 
   const handleOpenImageOrder = (request, startIndex = 0) => {
     const images = (Array.isArray(request.imageUrls) ? request.imageUrls : []).filter(Boolean);
-    if (images.length === 0) {
-      return;
-    }
-
     const canReorder = Boolean(token) && isSameUser(request.requester?.id, user?.id) && request.status === 'OPEN' && images.length > 1;
 
     setImageOrderState({
@@ -1706,8 +2143,8 @@ function PurchaseRequestsPanel({
 
     try {
       const response = await updatePurchaseRequestImageOrder(request.id, images, token);
-      const updatedRequest = normalizePurchaseRequest(response);
-      const nextImages = updatedRequest.imageUrls;
+      const nextImages = Array.isArray(response?.imageUrls) ? response.imageUrls : images;
+      const updatedRequest = { ...request, imageUrls: nextImages };
 
       setRequests((current) =>
         current.map((item) => (String(item.id) === String(updatedRequest.id) ? updatedRequest : item))
@@ -1733,14 +2170,79 @@ function PurchaseRequestsPanel({
     }
   };
 
+  const handleAddRequestImages = async (files) => {
+    const request = imageOrderState.request;
+    if (!request || !token || files.length === 0) return;
+    setImageOrderState((current) => ({ ...current, isSaving: true, error: '', message: '' }));
+    try {
+      const response = await addPurchaseRequestImages(request.id, files, token);
+      const nextImages = Array.isArray(response?.imageUrls) ? response.imageUrls : imageOrderState.images;
+      const updatedRequest = { ...request, imageUrls: nextImages };
+      setRequests((current) => current.map((item) => (String(item.id) === String(request.id) ? { ...item, imageUrls: nextImages } : item)));
+      setImageOrderState((current) => ({
+        ...current,
+        request: updatedRequest,
+        images: nextImages,
+        originalImages: nextImages,
+        activeIndex: Math.max(nextImages.length - 1, 0),
+        canReorder: nextImages.length > 1,
+        isSaving: false,
+        message: '圖片已新增。',
+      }));
+      onShowToast?.({ title: '圖片已新增', message: '託購圖片已更新。' });
+    } catch (nextError) {
+      setImageOrderState((current) => ({ ...current, isSaving: false, error: nextError instanceof Error ? nextError.message : '圖片新增失敗' }));
+    }
+  };
+
+  const handleDeleteRequestImage = async (imageUrl, imageIndex) => {
+    const request = imageOrderState.request;
+    if (!request || !token || !window.confirm('確定刪除這張圖片？')) return;
+    const path = (() => {
+      try {
+        return new URL(imageUrl, window.location.origin).pathname;
+      } catch {
+        return imageUrl;
+      }
+    })();
+    const fileName = decodeURIComponent(path.split('/').filter(Boolean).pop() ?? '');
+    if (!fileName) return;
+
+    setImageOrderState((current) => ({ ...current, isSaving: true, error: '', message: '' }));
+    try {
+      const response = await deletePurchaseRequestImage(request.id, fileName, token);
+      const nextImages = Array.isArray(response?.imageUrls)
+        ? response.imageUrls
+        : imageOrderState.images.filter((_, index) => index !== imageIndex);
+      const updatedRequest = { ...request, imageUrls: nextImages };
+      setRequests((current) => current.map((item) => (String(item.id) === String(request.id) ? { ...item, imageUrls: nextImages } : item)));
+      setImageOrderState((current) => ({
+        ...current,
+        request: updatedRequest,
+        images: nextImages,
+        originalImages: nextImages,
+        activeIndex: Math.min(current.activeIndex, Math.max(nextImages.length - 1, 0)),
+        canReorder: nextImages.length > 1,
+        isSaving: false,
+        message: '圖片已刪除。',
+      }));
+    } catch (nextError) {
+      setImageOrderState((current) => ({ ...current, isSaving: false, error: nextError instanceof Error ? nextError.message : '圖片刪除失敗' }));
+    }
+  };
+
   const handleOpenReview = async (request) => {
     if (!token) {
       onRequireLogin?.();
       return;
     }
+    if (request.orderId == null) {
+      setError('這筆託購尚未取得訂單編號，無法評價。');
+      return;
+    }
     setReviewError('');
     try {
-      const status = await checkPurchaseRequestReviewStatus(request.id, token);
+      const status = await checkPurchaseRequestReviewStatus(request.orderId, token);
       if (status?.isReviewed) {
         setError('你已經評價過這張託購單。');
         return;
@@ -1759,7 +2261,7 @@ function PurchaseRequestsPanel({
     setIsReviewing(true);
     setReviewError('');
     try {
-      await createPurchaseRequestReview(reviewTarget.id, payload, token);
+      await createPurchaseRequestReview(reviewTarget.orderId, payload, token);
       setReviewTarget(null);
       onShowToast?.({ title: '評價已送出', message: '信用分紀錄已同步更新。' });
       refresh();
@@ -1914,6 +2416,11 @@ function PurchaseRequestsPanel({
               <span>隱藏已滿</span>
             </label>
           )}
+          {token && (
+            <button type="button" className="text-button" onClick={() => setIsReceivedReviewsOpen(true)}>
+              收到的評價
+            </button>
+          )}
         </div>
         <section className="mine-status-inline-filter purchase-request-status-filter">
           <span className="mine-status-filter-label">狀態</span>
@@ -1968,11 +2475,22 @@ function PurchaseRequestsPanel({
               onAcceptQuote={(item, quote) =>
                 withAction(item, () => acceptPurchaseRequestQuote(item.id, quote.id, token), '已接受報價並成立委託。')
               }
-              onDeliver={(item) => withAction(item, () => deliverPurchaseRequest(item.id, token), '已標記交付。')}
-              onComplete={(item) => withAction(item, () => completePurchaseRequest(item.id, token), '託購已完成。')}
+              onDeliver={(item) => withAction(item, () => deliverPurchaseOrder(item.orderId, token), '已標記交付。')}
+              onComplete={(item) => withAction(item, () => completePurchaseOrder(item.orderId, token), '託購已完成。')}
               onCancel={(item) => setCancelTarget(item)}
               onExtend={handleExtend}
               onReview={handleOpenReview}
+              onOpenOrder={setOrderTarget}
+              onOpenChat={onOpenPurchaseChat}
+              onEditOwnQuote={(item) => {
+                setQuoteSubmitError('');
+                setQuoteEditTarget(item);
+              }}
+              onWithdrawOwnQuote={handleWithdrawQuote}
+              onEditRequest={(item) => {
+                setEditError('');
+                setEditTarget(item);
+              }}
               onManageImages={handleOpenImageOrder}
               onRequireLogin={onRequireLogin}
               onExpand={viewMode === 'compact' && !isExpandedCompactRequest ? setExpandedCompactRequestId : undefined}
@@ -1997,7 +2515,9 @@ function PurchaseRequestsPanel({
       </section>
 
       <PurchaseRequestCreateModal
+        key={isCreateOpen ? 'purchase-create-open' : 'purchase-create-closed'}
         isOpen={isCreateOpen}
+        token={token}
         isSubmitting={isCreating}
         error={createError}
         onClose={() => onCreateOpenChange?.(false)}
@@ -2005,6 +2525,7 @@ function PurchaseRequestsPanel({
       />
 
       <PurchaseRequestReviewModal
+        key={reviewTarget ? `purchase-review-${reviewTarget.orderId}` : 'purchase-review-closed'}
         request={reviewTarget}
         isSubmitting={isReviewing}
         error={reviewError}
@@ -2020,6 +2541,7 @@ function PurchaseRequestsPanel({
       />
 
       <PurchaseRequestQuoteModal
+        key={quoteTarget ? `create-${quoteTarget.id}` : 'create-closed'}
         request={quoteTarget}
         isSubmitting={Boolean(quoteTarget) && actionId === quoteTarget.id}
         error={quoteSubmitError}
@@ -2028,6 +2550,31 @@ function PurchaseRequestsPanel({
           setQuoteSubmitError('');
         }}
         onSubmit={handleSubmitQuote}
+      />
+
+      <PurchaseRequestQuoteModal
+        key={quoteEditTarget ? `edit-${quoteEditTarget.quoteId}` : 'edit-closed'}
+        request={quoteEditTarget}
+        initialQuote={quoteEditTarget ? { quoteAmount: quoteEditTarget.quoteAmount, quoteNote: quoteEditTarget.quoteNote } : null}
+        isSubmitting={Boolean(quoteEditTarget) && actionId === quoteEditTarget.id}
+        error={quoteSubmitError}
+        onClose={() => {
+          setQuoteEditTarget(null);
+          setQuoteSubmitError('');
+        }}
+        onSubmit={handleUpdateQuote}
+      />
+
+      <PurchaseRequestEditModal
+        key={editTarget ? `request-edit-${editTarget.id}` : 'request-edit-closed'}
+        request={editTarget}
+        isSubmitting={Boolean(editTarget) && actionId === editTarget.id}
+        error={editError}
+        onClose={() => {
+          setEditTarget(null);
+          setEditError('');
+        }}
+        onSubmit={handleUpdateRequest}
       />
 
       <ImageGalleryModal
@@ -2047,6 +2594,43 @@ function PurchaseRequestsPanel({
         onMoveImage={handleMoveImageOrder}
         onMoveImageToFront={handleMoveImageOrderToFront}
         onSaveOrder={handleSaveImageOrder}
+        canAdd={Boolean(imageOrderState.request) && imageOrderState.request?.status === 'OPEN'}
+        canDelete={Boolean(imageOrderState.request) && imageOrderState.request?.status === 'OPEN'}
+        isManagingImages={imageOrderState.isSaving}
+        onAddImages={handleAddRequestImages}
+        onDeleteImage={handleDeleteRequestImage}
+      />
+
+      <PurchaseOrderModal
+        isOpen={Boolean(orderTarget)}
+        orderId={orderTarget?.orderId}
+        token={token}
+        currentUser={user}
+        onOpenChat={(order) => {
+          onOpenPurchaseChat?.({
+            ...orderTarget,
+            ...order,
+            id: order.chatRoomId,
+            roomType: 'PURCHASE',
+            orderId: order.id,
+            itemName: order.itemName,
+            counterpartId: String(order.requesterId) === String(user?.id) ? order.runnerId : order.requesterId,
+            counterpartName:
+              String(order.requesterId) === String(user?.id) ? order.runnerDisplayName : order.requesterDisplayName,
+          });
+          setOrderTarget(null);
+        }}
+        onUpdated={() => {
+          refresh();
+          onShowToast?.({ title: '訂單已更新', message: '最新狀態已同步。' });
+        }}
+        onClose={() => setOrderTarget(null)}
+      />
+
+      <PurchaseReceivedReviewsModal
+        isOpen={isReceivedReviewsOpen}
+        token={token}
+        onClose={() => setIsReceivedReviewsOpen(false)}
       />
     </>
   );

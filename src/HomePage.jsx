@@ -19,6 +19,8 @@ import {
   fetchMyHostedCampaigns,
   fetchMyJoinedCampaigns,
   fetchMyParticipation,
+  fetchPurchaseChatRooms,
+  fetchPurchaseChatUnreadCount,
   fetchReadNotifications,
   fetchStores,
   fetchUnreadNotifications,
@@ -32,6 +34,7 @@ import {
   LINE_LOGIN_SUCCESS_MESSAGE,
   markParticipantNoShow,
   markNotificationRead,
+  markPurchaseChatRoomRead,
   openLineLoginPopup,
   raiseCampaignDispute,
   reviseCampaign,
@@ -70,6 +73,7 @@ import JoinCampaignModal from './JoinCampaignModal';
 import DealCard from './DealCard';
 import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
+import PurchaseChatModal from './PurchaseChatModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
 import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './PurchaseRequestsPanel';
@@ -80,12 +84,6 @@ import {
   DiagonalExpandIcon,
   SearchIcon,
 } from './Icons';
-
-const MAX_PROXY_REQUEST_IMAGES = 3;
-
-function getProxyRequestImageFileKey(file) {
-  return `${file.name}-${file.size}-${file.lastModified}`;
-}
 
 const CHAT_ROOMS_LOAD_ERROR_MESSAGE = '部分聊天室資料異常，暫時無法完整載入。請稍後再試，或從通知／我的團購開啟聊天室。';
 const CHAT_ROOM_UNAVAILABLE_MESSAGE = '這筆聊天室資料異常或已不存在，暫時無法開啟。';
@@ -586,12 +584,30 @@ function canOpenReadonlyParticipationFromDeal(deal) {
 }
 
 function normalizeNotification(notification) {
-  const type = notification.type ?? 'NOTICE';
+  const type = (notification.type ?? 'NOTICE').toString().toUpperCase();
   const typeLabelMap = {
     CAMPAIGN_FULL: '團購已滿團',
     CAMPAIGN_CANCELLED: '團購已取消',
     CAMPAIGN_DELIVERED: '已標記交付',
     CAMPAIGN_COMPLETED: '團購已完成',
+    PURCHASE_QUOTED: '收到託購報價',
+    PURCHASE_QUOTE_SELECTED: '託購報價已選定',
+    PURCHASE_QUOTE_NOT_SELECTED: '託購報價未選定',
+    PURCHASE_ACCEPTED: '託購已承接',
+    PURCHASE_REQUEST_EXPIRED: '託購已到期',
+    PURCHASE_QUOTE_EXPIRED: '託購報價已到期',
+    PURCHASE_CHAT_MESSAGE: '託購聊天室訊息',
+    PURCHASE_ORDER_STARTED: '託購已開始處理',
+    PURCHASE_ITEM_UNAVAILABLE: '託購商品缺貨',
+    PURCHASE_ORDER_CANCELLED: '託購訂單已取消',
+    PURCHASE_ORDER_SHIPPED: '託購商品已寄出',
+    PURCHASE_ORDER_DELIVERED: '託購已標記交貨',
+    PURCHASE_ORDER_COMPLETED: '託購訂單已完成',
+    PURCHASE_ORDER_AUTO_COMPLETED: '託購訂單已自動完成',
+    PURCHASE_ABNORMAL_REPORTED: '託購異常已回報',
+    PURCHASE_ABNORMAL_CLOSED: '託購異常已結案',
+    PURCHASE_ABNORMAL_TIMEOUT: '託購異常逾時',
+    PURCHASE_CONFIRMATION_TIMEOUT: '託購確認逾時',
     NOTICE: '通知',
   };
 
@@ -913,6 +929,33 @@ function buildOpenChatRooms(hostedData, joinedData) {
     .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
 }
 
+function normalizePurchaseChatRoom(room) {
+  return {
+    ...room,
+    roomType: 'PURCHASE',
+    id: room?.id,
+    orderId: room?.orderId ?? room?.order_id,
+    itemName: room?.itemName ?? room?.item_name ?? '託購聊天室',
+    counterpartId: room?.counterpartId ?? room?.counterpart_id,
+    counterpartName: room?.counterpartName ?? room?.counterpart_name ?? '',
+    counterpartAvatarUrl: room?.counterpartAvatarUrl ?? room?.counterpart_avatar_url ?? '',
+    orderStatus: (room?.orderStatus ?? room?.order_status ?? '').toString().toUpperCase(),
+    readOnly: Boolean(room?.readOnly ?? room?.read_only),
+    unreadCount: Number(room?.unreadCount ?? room?.unread_count ?? 0),
+    lastMessage: room?.lastMessage ?? room?.last_message ?? null,
+    updatedAt: room?.updatedAt ?? room?.updated_at ?? '',
+  };
+}
+
+function getCombinedChatRoomSortTime(room) {
+  const value =
+    room?.roomType === 'PURCHASE'
+      ? room?.lastMessage?.createdAt ?? room?.lastMessage?.created_at ?? room?.updatedAt
+      : getCampaignEstablishedAtValue(room) || getCampaignChatExpiresAtValue(room) || getCampaignCompletedAtValue(room);
+  const date = parseLocalDateTime(value);
+  return date ? date.getTime() : 0;
+}
+
 function isSameUserId(firstUserId, secondUserId) {
   if (firstUserId == null || secondUserId == null) {
     return false;
@@ -982,6 +1025,30 @@ function isFullCampaignNotification(notification) {
 
 function isReviewCampaignNotification(notification) {
   return notification?.type === 'CAMPAIGN_COMPLETED' && notification?.referenceId != null;
+}
+
+function isPurchaseOrderNotification(notification) {
+  const type = notification?.type;
+
+  return (
+    notification?.referenceId != null &&
+    [
+      'PURCHASE_QUOTE_SELECTED',
+      'PURCHASE_ACCEPTED',
+      'PURCHASE_CHAT_MESSAGE',
+      'PURCHASE_ORDER_STARTED',
+      'PURCHASE_ITEM_UNAVAILABLE',
+      'PURCHASE_ORDER_CANCELLED',
+      'PURCHASE_ORDER_SHIPPED',
+      'PURCHASE_ORDER_DELIVERED',
+      'PURCHASE_ORDER_COMPLETED',
+      'PURCHASE_ORDER_AUTO_COMPLETED',
+      'PURCHASE_ABNORMAL_REPORTED',
+      'PURCHASE_ABNORMAL_CLOSED',
+      'PURCHASE_ABNORMAL_TIMEOUT',
+      'PURCHASE_CONFIRMATION_TIMEOUT',
+    ].includes(type)
+  );
 }
 
 const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
@@ -1063,6 +1130,7 @@ function HomePage() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isChatRoomsOpen, setIsChatRoomsOpen] = useState(false);
   const [chatRooms, setChatRooms] = useState([]);
+  const [purchaseChatUnreadTotal, setPurchaseChatUnreadTotal] = useState(0);
   const [chatRoomsError, setChatRoomsError] = useState('');
   const [isChatRoomsLoading, setIsChatRoomsLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -1100,9 +1168,6 @@ function HomePage() {
   const [requestDraftMessage, setRequestDraftMessage] = useState('');
   const [isProxyRequestFormOpen, setIsProxyRequestFormOpen] = useState(false);
   const [isProxyRequestModalOpen, setIsProxyRequestModalOpen] = useState(false);
-  const [proxyRequestImages, setProxyRequestImages] = useState([]);
-  const [activeProxyRequestImageIndex, setActiveProxyRequestImageIndex] = useState(0);
-  const proxyRequestPreviewTouchStartXRef = useRef(null);
   const [participationCampaign, setParticipationCampaign] = useState(null);
   const [participationQuantityDraft, setParticipationQuantityDraft] = useState('1');
   const [participationError, setParticipationError] = useState('');
@@ -1114,6 +1179,7 @@ function HomePage() {
     isHostAllReviewed: false,
   });
   const [chatCampaign, setChatCampaign] = useState(null);
+  const [purchaseChatRoom, setPurchaseChatRoom] = useState(null);
   const [chatStatusEvent, setChatStatusEvent] = useState(null);
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
@@ -1144,7 +1210,9 @@ function HomePage() {
         setIsNotificationsOpen(false);
         setIsChatRoomsOpen(false);
         setChatCampaign(null);
+        setPurchaseChatRoom(null);
         setChatRooms([]);
+        setPurchaseChatUnreadTotal(0);
         setChatRoomsError('');
         setNotifications([]);
         setReadNotifications([]);
@@ -1206,35 +1274,22 @@ function HomePage() {
   const pendingProfileReturnRef = useRef(null);
   const profileRestoreAppliedRef = useRef(false);
   const campaignsSignatureRef = useRef('[]');
+  const chatRoomsRef = useRef(chatRooms);
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
   const chatUnreadRoomCount = useMemo(
-    () => chatRooms.reduce((count, room) => count + (Number(room?.unreadMessageCount ?? 0) > 0 ? 1 : 0), 0),
-    [chatRooms]
-  );
-  const proxyRequestImagePreviews = useMemo(
     () =>
-      proxyRequestImages.map((file) => ({
-        file,
-        url: URL.createObjectURL(file),
-      })),
-    [proxyRequestImages]
+      purchaseChatUnreadTotal +
+      chatRooms.reduce(
+        (count, room) =>
+          count + (room?.roomType !== 'PURCHASE' && Number(room?.unreadMessageCount ?? 0) > 0 ? 1 : 0),
+        0
+      ),
+    [chatRooms, purchaseChatUnreadTotal]
   );
-  const activeProxyRequestImagePreview = proxyRequestImagePreviews[activeProxyRequestImageIndex] ?? null;
 
   useEffect(() => {
-    return () => {
-      proxyRequestImagePreviews.forEach(({ url }) => URL.revokeObjectURL(url));
-    };
-  }, [proxyRequestImagePreviews]);
-
-  useEffect(() => {
-    if (proxyRequestImagePreviews.length === 0) {
-      setActiveProxyRequestImageIndex(0);
-      return;
-    }
-
-    setActiveProxyRequestImageIndex((current) => Math.min(current, proxyRequestImagePreviews.length - 1));
-  }, [proxyRequestImagePreviews.length]);
+    chatRoomsRef.current = chatRooms;
+  }, [chatRooms]);
 
   const dismissLiveNotification = useCallback((notificationKey) => {
     const timerId = liveNotificationTimersRef.current.get(notificationKey);
@@ -2038,7 +2093,9 @@ function HomePage() {
     setIsNotificationsOpen(false);
     setIsChatRoomsOpen(false);
     setChatRooms([]);
+    setPurchaseChatUnreadTotal(0);
     setChatRoomsError('');
+    setPurchaseChatRoom(null);
     setIsCreateCampaignOpen(false);
   };
 
@@ -2074,7 +2131,7 @@ function HomePage() {
 
       setChatRooms((current) =>
         current.map((room) =>
-          Number(room?.id ?? room?.campaignId) === Number(campaignId)
+          room?.roomType !== 'PURCHASE' && Number(room?.id ?? room?.campaignId) === Number(campaignId)
             ? {
                 ...room,
                 unreadMessageCount: 0,
@@ -2085,6 +2142,23 @@ function HomePage() {
     },
     [user?.id]
   );
+
+  const markPurchaseRoomAsRead = useCallback((roomId) => {
+    const room = chatRoomsRef.current.find(
+      (item) => item?.roomType === 'PURCHASE' && String(item.id) === String(roomId)
+    );
+    const readCount = Number(room?.unreadCount ?? room?.unreadMessageCount ?? 0);
+    if (readCount > 0) {
+      setPurchaseChatUnreadTotal((current) => Math.max(0, current - readCount));
+    }
+    setChatRooms((current) =>
+      current.map((room) =>
+        room?.roomType === 'PURCHASE' && String(room.id) === String(roomId)
+          ? { ...room, unreadCount: 0, unreadMessageCount: 0 }
+          : room
+      )
+    );
+  }, []);
 
   const markNotificationAsRead = async (notificationId, sourceNotification = null) => {
     if (!token) {
@@ -2164,6 +2238,7 @@ function HomePage() {
   const loadOpenChatRooms = useCallback(async ({ silent = false } = {}) => {
     if (!token) {
       setChatRooms([]);
+      setPurchaseChatUnreadTotal(0);
       setChatRoomsError('');
       setIsChatRoomsLoading(false);
       return;
@@ -2176,16 +2251,24 @@ function HomePage() {
 
     try {
       const query = { page: 0, size: CHAT_ROOM_PAGE_SIZE };
-      const [hostedResult, joinedResult] = await Promise.allSettled([
+      const [hostedResult, joinedResult, purchaseResult, purchaseUnreadResult] = await Promise.allSettled([
         fetchMyHostedCampaigns(query, token),
         fetchMyJoinedCampaigns(query, token),
+        fetchPurchaseChatRooms(token),
+        fetchPurchaseChatUnreadCount(token),
       ]);
       const hostedData = hostedResult.status === 'fulfilled' ? hostedResult.value : [];
       const joinedData = joinedResult.status === 'fulfilled' ? joinedResult.value : [];
-      const hasAuthExpired = [hostedResult, joinedResult].some(
+      const purchaseData = purchaseResult.status === 'fulfilled' ? purchaseResult.value : [];
+      const purchaseUnreadData = purchaseUnreadResult.status === 'fulfilled' ? purchaseUnreadResult.value : null;
+      const hasAuthExpired = [hostedResult, joinedResult, purchaseResult, purchaseUnreadResult].some(
         (result) => result.status === 'rejected' && result.reason?.message === AUTH_EXPIRED_MESSAGE
       );
-      const hasSourceError = hostedResult.status === 'rejected' || joinedResult.status === 'rejected';
+      const hasSourceError =
+        hostedResult.status === 'rejected' ||
+        joinedResult.status === 'rejected' ||
+        purchaseResult.status === 'rejected' ||
+        purchaseUnreadResult.status === 'rejected';
 
       if (hasAuthExpired) {
         setChatRooms([]);
@@ -2222,7 +2305,19 @@ function HomePage() {
         }
       });
 
-      setChatRooms(roomsWithUnreadCounts);
+      const campaignRooms = roomsWithUnreadCounts.map((room) => ({ ...room, roomType: 'CAMPAIGN' }));
+      const purchaseRooms = (Array.isArray(purchaseData) ? purchaseData : []).map(normalizePurchaseChatRoom);
+      setPurchaseChatUnreadTotal(
+        Number(
+          purchaseUnreadData?.unreadCount ??
+            purchaseRooms.reduce((count, room) => count + Number(room.unreadCount ?? 0), 0)
+        ) || 0
+      );
+      setChatRooms(
+        [...purchaseRooms, ...campaignRooms].sort(
+          (first, second) => getCombinedChatRoomSortTime(second) - getCombinedChatRoomSortTime(first)
+        )
+      );
       if (!silent && hasSourceError) {
         setChatRoomsError(CHAT_ROOMS_LOAD_ERROR_MESSAGE);
       }
@@ -2258,6 +2353,18 @@ function HomePage() {
   const handleOpenChatRoom = async (room) => {
     setChatRoomsError('');
 
+    if (room?.roomType === 'PURCHASE') {
+      try {
+        await markPurchaseChatRoomRead(room.id, token);
+        markPurchaseRoomAsRead(room.id);
+        setPurchaseChatRoom(room);
+        setIsChatRoomsOpen(false);
+      } catch (error) {
+        setChatRoomsError(error instanceof Error ? error.message : '託購聊天室開啟失敗');
+      }
+      return;
+    }
+
     const opened = await handleOpenChat(room, { showError: false });
     if (opened) {
       setIsChatRoomsOpen(false);
@@ -2267,6 +2374,63 @@ function HomePage() {
     setChatRoomsError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
   };
 
+  const handleOpenPurchaseChat = async (source) => {
+    if (!token) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+
+    const sourceRoomId = source?.roomType === 'PURCHASE' ? source?.id : source?.chatRoomId;
+    const sourceOrderId = source?.orderId;
+    if (sourceRoomId == null && sourceOrderId == null) {
+      showSuccessToast('聊天室尚未建立', '訂單成立後才會建立託購聊天室。');
+      return;
+    }
+
+    try {
+      let matchedRoom = chatRooms.find(
+        (room) =>
+          room?.roomType === 'PURCHASE' &&
+          ((sourceRoomId != null && String(room.id) === String(sourceRoomId)) ||
+            (sourceOrderId != null && String(room.orderId) === String(sourceOrderId)))
+      );
+
+      if (!matchedRoom) {
+        const rooms = await fetchPurchaseChatRooms(token);
+        const normalizedRooms = (Array.isArray(rooms) ? rooms : []).map(normalizePurchaseChatRoom);
+        matchedRoom = normalizedRooms.find(
+          (room) =>
+            (sourceRoomId != null && String(room.id) === String(sourceRoomId)) ||
+            (sourceOrderId != null && String(room.orderId) === String(sourceOrderId))
+        );
+      }
+
+      const fallbackRoom = {
+        ...source,
+        roomType: 'PURCHASE',
+        id: sourceRoomId,
+        orderId: sourceOrderId,
+        itemName: source?.itemName ?? source?.productName,
+        counterpartName:
+          source?.counterpartName ??
+          (String(source?.requester?.id ?? source?.requesterId) === String(user?.id)
+            ? source?.runner?.displayName ?? source?.runnerDisplayName
+            : source?.requester?.displayName ?? source?.requesterDisplayName),
+      };
+      const nextRoom = matchedRoom ?? fallbackRoom;
+      if (nextRoom.id == null) {
+        showSuccessToast('聊天室開啟失敗', '找不到這筆託購聊天室資料。');
+        return;
+      }
+
+      await markPurchaseChatRoomRead(nextRoom.id, token);
+      markPurchaseRoomAsRead(nextRoom.id);
+      setPurchaseChatRoom(nextRoom);
+    } catch (error) {
+      showSuccessToast('聊天室開啟失敗', error instanceof Error ? error.message : '請稍後再試。');
+    }
+  };
+
   const handleNotificationAction = async (notification) => {
     if (!token || !notification) {
       return;
@@ -2274,13 +2438,20 @@ function HomePage() {
 
     const isChatNotification = isFullCampaignNotification(notification);
     const isReviewNotification = isReviewCampaignNotification(notification);
+    const isPurchaseNotification = isPurchaseOrderNotification(notification);
 
-    if (!isChatNotification && !isReviewNotification) {
+    if (!isChatNotification && !isReviewNotification && !isPurchaseNotification) {
       await markNotificationAsRead(notification.id, notification);
       return;
     }
 
     await markNotificationAsRead(notification.id, notification);
+
+    if (isPurchaseNotification) {
+      setIsNotificationsOpen(false);
+      await handleOpenPurchaseChat({ orderId: notification.referenceId });
+      return;
+    }
 
     try {
       const targetCampaign = await findCampaignForNotification(notification.referenceId);
@@ -2748,7 +2919,11 @@ function HomePage() {
 
     dismissLiveNotification(notification.toastKey ?? getLiveNotificationKey(notification));
 
-    if (isFullCampaignNotification(notification) || isReviewCampaignNotification(notification)) {
+    if (
+      isFullCampaignNotification(notification) ||
+      isReviewCampaignNotification(notification) ||
+      isPurchaseOrderNotification(notification)
+    ) {
       await handleNotificationAction(notification);
       return;
     }
@@ -3090,111 +3265,6 @@ function HomePage() {
   const handleSubmitProxyPurchaseRequest = (event) => {
     event.preventDefault();
     setRequestDraftMessage('表單已在前端建立，尚未串接 API。');
-  };
-
-  const handleProxyRequestImageChange = (event) => {
-    const selectedImages = Array.from(event.target.files ?? []);
-    if (selectedImages.length === 0) {
-      event.target.value = '';
-      return;
-    }
-
-    setProxyRequestImages((currentImages) => {
-      const existingImageKeys = new Set(currentImages.map(getProxyRequestImageFileKey));
-      const uniqueSelectedImages = selectedImages.filter(
-        (file) => !existingImageKeys.has(getProxyRequestImageFileKey(file))
-      );
-      const availableSlots = Math.max(0, MAX_PROXY_REQUEST_IMAGES - currentImages.length);
-      const imagesToAdd = uniqueSelectedImages.slice(0, availableSlots);
-
-      if (imagesToAdd.length > 0) {
-        setActiveProxyRequestImageIndex(currentImages.length);
-      }
-
-      if (availableSlots === 0) {
-        setRequestDraftMessage('?????????? 3 ???????????');
-      } else if (selectedImages.length > 0 && uniqueSelectedImages.length === 0) {
-        setRequestDraftMessage('??????????');
-      } else if (uniqueSelectedImages.length > imagesToAdd.length) {
-        setRequestDraftMessage(`?????? 3 ??????? ${imagesToAdd.length} ??`);
-      } else {
-        setRequestDraftMessage('');
-      }
-
-      return [...currentImages, ...imagesToAdd];
-    });
-
-    event.target.value = '';
-  };
-
-  const reorderProxyRequestImages = (fromIndex, toIndex) => {
-    setProxyRequestImages((currentImages) => {
-      if (
-        fromIndex < 0 ||
-        toIndex < 0 ||
-        fromIndex >= currentImages.length ||
-        toIndex >= currentImages.length ||
-        fromIndex === toIndex
-      ) {
-        return currentImages;
-      }
-
-      const nextImages = [...currentImages];
-      const [movedImage] = nextImages.splice(fromIndex, 1);
-      nextImages.splice(toIndex, 0, movedImage);
-      return nextImages;
-    });
-  };
-
-  const removeProxyRequestImage = (targetIndex) => {
-    setProxyRequestImages((currentImages) => currentImages.filter((_, index) => index !== targetIndex));
-    setRequestDraftMessage('');
-    setActiveProxyRequestImageIndex((current) => Math.max(0, current - (targetIndex <= current ? 1 : 0)));
-  };
-
-  const moveProxyRequestPreviewLeft = () => {
-    if (proxyRequestImagePreviews.length <= 1) {
-      return;
-    }
-
-    setActiveProxyRequestImageIndex(
-      (current) => (current - 1 + proxyRequestImagePreviews.length) % proxyRequestImagePreviews.length
-    );
-  };
-
-  const moveProxyRequestPreviewRight = () => {
-    if (proxyRequestImagePreviews.length <= 1) {
-      return;
-    }
-
-    setActiveProxyRequestImageIndex((current) => (current + 1) % proxyRequestImagePreviews.length);
-  };
-
-  const handleProxyRequestPreviewTouchStart = (event) => {
-    event.stopPropagation();
-    proxyRequestPreviewTouchStartXRef.current = event.touches?.[0]?.clientX ?? null;
-  };
-
-  const handleProxyRequestPreviewTouchMove = (event) => {
-    event.stopPropagation();
-  };
-
-  const handleProxyRequestPreviewTouchEnd = (event) => {
-    event.stopPropagation();
-    const startX = proxyRequestPreviewTouchStartXRef.current;
-    const endX = event.changedTouches?.[0]?.clientX ?? null;
-    proxyRequestPreviewTouchStartXRef.current = null;
-
-    if (startX == null || endX == null || Math.abs(endX - startX) < 40) {
-      return;
-    }
-
-    if (endX < startX) {
-      moveProxyRequestPreviewRight();
-      return;
-    }
-
-    moveProxyRequestPreviewLeft();
   };
 
   const handleOpenParticipationFromChat = async (deal) => {
@@ -4345,6 +4415,15 @@ function HomePage() {
         onClose={() => setChatCampaign(null)}
       />
 
+      <PurchaseChatModal
+        isOpen={Boolean(purchaseChatRoom)}
+        room={purchaseChatRoom}
+        token={token}
+        currentUser={user}
+        onRead={markPurchaseRoomAsRead}
+        onClose={() => setPurchaseChatRoom(null)}
+      />
+
       <ParticipationActionModal
         key={participationCampaign ? `${participationCampaign.id}-${participationCampaign.initialHostView ?? 'overview'}` : 'participation-modal'}
         isOpen={Boolean(participationCampaign)}
@@ -4391,6 +4470,7 @@ function HomePage() {
               onModalOpenChange={setIsProxyRequestModalOpen}
               onRequireLogin={() => setIsLoginModalOpen(true)}
               onShowToast={({ title, message }) => showSuccessToast(title, message)}
+              onOpenPurchaseChat={handleOpenPurchaseChat}
             />
           </>
         ) : activeType === 'REQUEST_DISABLED' ? (
@@ -4810,6 +4890,7 @@ function HomePage() {
             onModalOpenChange={setIsProxyRequestModalOpen}
             onRequireLogin={() => setIsLoginModalOpen(true)}
             onShowToast={({ title, message }) => showSuccessToast(title, message)}
+            onOpenPurchaseChat={handleOpenPurchaseChat}
           />
         ) : activeType !== 'REQUEST' && (
           <>

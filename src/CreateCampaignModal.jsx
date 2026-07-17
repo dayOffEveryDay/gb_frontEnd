@@ -40,15 +40,6 @@ function CreateCampaignModal({
     };
   }, [imagePreviews]);
 
-  useEffect(() => {
-    if (imagePreviews.length === 0) {
-      setActivePreviewIndex(0);
-      return;
-    }
-
-    setActivePreviewIndex((current) => Math.min(current, imagePreviews.length - 1));
-  }, [imagePreviews.length]);
-
   if (!isOpen) {
     return null;
   }

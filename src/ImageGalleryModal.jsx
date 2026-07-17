@@ -17,6 +17,11 @@ function ImageGalleryModal({
   onMoveImage,
   onMoveImageToFront,
   onSaveOrder,
+  canAdd = false,
+  canDelete = false,
+  isManagingImages = false,
+  onAddImages,
+  onDeleteImage,
 }) {
   const touchStartXRef = useRef(null);
 
@@ -39,7 +44,7 @@ function ImageGalleryModal({
     return () => window.removeEventListener('keydown', handleKeydown);
   }, [isOpen, onClose, onNext, onPrev]);
 
-  if (!isOpen || !images.length) {
+  if (!isOpen || (!images.length && !canAdd)) {
     return null;
   }
 
@@ -91,7 +96,7 @@ function ImageGalleryModal({
               ‹
             </button>
           )}
-          <img src={activeImage} alt={title} className="image-gallery-image" />
+          {activeImage ? <img src={activeImage} alt={title} className="image-gallery-image" /> : <p className="muted-copy">目前沒有圖片</p>}
           {hasMultipleImages && (
             <button type="button" className="image-gallery-nav next" onClick={onNext} aria-label="下一張">
               ›
@@ -101,9 +106,35 @@ function ImageGalleryModal({
         <div className="image-gallery-footer">
           <strong>{title}</strong>
           <span>
-            {safeIndex + 1} / {images.length}
+            {images.length ? `${safeIndex + 1} / ${images.length}` : '0 / 5'}
           </span>
         </div>
+        {(canAdd || canDelete) && (
+          <div className="image-gallery-actions">
+            {canAdd && images.length < 5 && (
+              <label className="text-button image-gallery-upload-button">
+                新增圖片
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  disabled={isManagingImages}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = '';
+                    if (files.length) onAddImages?.(files.slice(0, 5 - images.length));
+                  }}
+                />
+              </label>
+            )}
+            {canDelete && activeImage && (
+              <button type="button" className="ghost-button danger" onClick={() => onDeleteImage?.(activeImage, safeIndex)} disabled={isManagingImages}>
+                刪除這張
+              </button>
+            )}
+          </div>
+        )}
         {canReorder && hasMultipleImages && (
           <>
             <div className="image-gallery-actions">
