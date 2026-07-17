@@ -3397,11 +3397,17 @@
 }
 
 .deal-tag-actions {
+  position: relative;
+  z-index: 8;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+.deal-tag-actions .chat-action-button {
+  box-shadow: 0 0 0 4px var(--surface-elevated);
 }
 
 .type-pill {
