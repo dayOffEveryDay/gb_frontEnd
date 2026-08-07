@@ -74,9 +74,11 @@ import DealCard from './DealCard';
 import ImageGalleryModal from './ImageGalleryModal';
 import CampaignChatModal from './CampaignChatModal';
 import PurchaseChatModal from './PurchaseChatModal';
+import PurchaseOrderModal from './PurchaseOrderModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
 import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './PurchaseRequestsPanel';
+import { shareCampaign } from './shareUtils';
 import {
   AvatarIcon,
   CardViewIcon,
@@ -686,7 +688,20 @@ function normalizeHostDashboard(dashboard) {
 
 function normalizeNotificationList(data) {
   const items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-  return items.map(normalizeNotification);
+  const purchaseChatRoomsSeen = new Set();
+
+  return items.map(normalizeNotification).filter((notification) => {
+    if (notification.type !== 'PURCHASE_CHAT_MESSAGE' || notification.referenceId == null) {
+      return true;
+    }
+
+    const roomKey = String(notification.referenceId);
+    if (purchaseChatRoomsSeen.has(roomKey)) {
+      return false;
+    }
+    purchaseChatRoomsSeen.add(roomKey);
+    return true;
+  });
 }
 
 function getReviewKey(campaignId, revieweeId) {
@@ -802,6 +817,14 @@ function getNormalizedCampaignId(campaign) {
 
   const normalizedCampaignId = Number(campaignIdText);
   return Number.isInteger(normalizedCampaignId) && normalizedCampaignId > 0 ? normalizedCampaignId : null;
+}
+
+function getCampaignDisplayName(campaign, fallbackCampaignId = null) {
+  const itemName = (campaign?.itemName ?? campaign?.item_name ?? '').toString().trim();
+  const campaignId = getNormalizedCampaignId(campaign) ?? fallbackCampaignId;
+  const idLabel = campaignId != null ? `（團購編號 #${campaignId}）` : '';
+
+  return itemName ? `「${itemName}」${idLabel}` : idLabel || '這筆團購';
 }
 
 function hasUsableCampaignId(campaign) {
@@ -1052,8 +1075,6 @@ function isPurchaseOrderNotification(notification) {
 }
 
 const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
-const SWIPE_HINT_SEEN_KEY = 'home_swipe_hint_seen';
-
 function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1180,6 +1201,8 @@ function HomePage() {
   });
   const [chatCampaign, setChatCampaign] = useState(null);
   const [purchaseChatRoom, setPurchaseChatRoom] = useState(null);
+  const [purchaseOrderFromChat, setPurchaseOrderFromChat] = useState(null);
+  const chatReturnContextRef = useRef(null);
   const [chatStatusEvent, setChatStatusEvent] = useState(null);
   const [galleryState, setGalleryState] = useState({
     isOpen: false,
@@ -1243,7 +1266,6 @@ function HomePage() {
   const [isDealViewControlVisible, setIsDealViewControlVisible] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.matchMedia('(min-width: 700px)').matches);
   const [pageTransitionDirection, setPageTransitionDirection] = useState('forward');
-  const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1265,6 +1287,7 @@ function HomePage() {
   const gestureLockRef = useRef('');
   const searchInputRef = useRef(null);
   const notificationClientRef = useRef(null);
+  const purchaseChatRoomRef = useRef(null);
   const liveNotificationTimersRef = useRef(new Map());
   const successToastTimerRef = useRef(null);
   const dealViewControlTimerRef = useRef(null);
@@ -1290,6 +1313,10 @@ function HomePage() {
   useEffect(() => {
     chatRoomsRef.current = chatRooms;
   }, [chatRooms]);
+
+  useEffect(() => {
+    purchaseChatRoomRef.current = purchaseChatRoom;
+  }, [purchaseChatRoom]);
 
   const dismissLiveNotification = useCallback((notificationKey) => {
     const timerId = liveNotificationTimersRef.current.get(notificationKey);
@@ -1710,19 +1737,41 @@ function HomePage() {
             client.subscribe('/user/queue/notifications', (frame) => {
               try {
                 const incomingNotification = normalizeNotification(JSON.parse(frame.body));
+                const activePurchaseOrderId = purchaseChatRoomRef.current?.orderId;
+                const isActivePurchaseChatMessage =
+                  incomingNotification.type === 'PURCHASE_CHAT_MESSAGE' &&
+                  activePurchaseOrderId != null &&
+                  String(incomingNotification.referenceId) === String(activePurchaseOrderId);
 
                 if (!disposed) {
-                  if (notificationSoundEnabledRef.current) {
+                  if (!isActivePurchaseChatMessage && notificationSoundEnabledRef.current) {
                     void playNotificationSound(notificationAudioContextRef);
                   }
 
-                  pushLiveNotification(incomingNotification);
+                  if (!isActivePurchaseChatMessage) {
+                    pushLiveNotification(incomingNotification);
+                  }
                 }
 
                 fetchUnreadNotifications(token)
                   .then((data) => {
                     if (!disposed) {
-                      setNotifications(normalizeNotificationList(data));
+                      const nextNotifications = normalizeNotificationList(data);
+                      const activeChatNotificationIds = nextNotifications
+                        .filter(
+                          (notification) =>
+                            notification.type === 'PURCHASE_CHAT_MESSAGE' &&
+                            activePurchaseOrderId != null &&
+                            String(notification.referenceId) === String(activePurchaseOrderId) &&
+                            notification.id != null
+                        )
+                        .map((notification) => notification.id);
+                      setNotifications(
+                        nextNotifications.filter((notification) => !activeChatNotificationIds.includes(notification.id))
+                      );
+                      if (activeChatNotificationIds.length > 0) {
+                        void Promise.all(activeChatNotificationIds.map((notificationId) => markNotificationRead(notificationId, token))).catch(() => {});
+                      }
                       setNotificationsError('');
                     }
                   })
@@ -2160,6 +2209,17 @@ function HomePage() {
     );
   }, []);
 
+  const hidePurchaseChatNotifications = useCallback((orderId) => {
+    if (orderId == null) return;
+    setNotifications((current) =>
+      current.filter(
+        (notification) =>
+          notification.type !== 'PURCHASE_CHAT_MESSAGE' ||
+          String(notification.referenceId) !== String(orderId)
+      )
+    );
+  }, []);
+
   const markNotificationAsRead = async (notificationId, sourceNotification = null) => {
     if (!token) {
       return;
@@ -2357,6 +2417,8 @@ function HomePage() {
       try {
         await markPurchaseChatRoomRead(room.id, token);
         markPurchaseRoomAsRead(room.id);
+        hidePurchaseChatNotifications(room.orderId);
+        chatReturnContextRef.current = { type: 'CHAT_ROOMS' };
         setPurchaseChatRoom(room);
         setIsChatRoomsOpen(false);
       } catch (error) {
@@ -2365,7 +2427,10 @@ function HomePage() {
       return;
     }
 
-    const opened = await handleOpenChat(room, { showError: false });
+    const opened = await handleOpenChat(room, {
+      showError: false,
+      returnContext: { type: 'CHAT_ROOMS' },
+    });
     if (opened) {
       setIsChatRoomsOpen(false);
       return;
@@ -2374,17 +2439,17 @@ function HomePage() {
     setChatRoomsError(CHAT_ROOM_UNAVAILABLE_MESSAGE);
   };
 
-  const handleOpenPurchaseChat = async (source) => {
+  const handleOpenPurchaseChat = async (source, { returnContext = null } = {}) => {
     if (!token) {
       setIsLoginModalOpen(true);
-      return;
+      return false;
     }
 
     const sourceRoomId = source?.roomType === 'PURCHASE' ? source?.id : source?.chatRoomId;
     const sourceOrderId = source?.orderId;
     if (sourceRoomId == null && sourceOrderId == null) {
       showSuccessToast('聊天室尚未建立', '訂單成立後才會建立託購聊天室。');
-      return;
+      return false;
     }
 
     try {
@@ -2420,18 +2485,22 @@ function HomePage() {
       const nextRoom = matchedRoom ?? fallbackRoom;
       if (nextRoom.id == null) {
         showSuccessToast('聊天室開啟失敗', '找不到這筆託購聊天室資料。');
-        return;
+        return false;
       }
 
       await markPurchaseChatRoomRead(nextRoom.id, token);
       markPurchaseRoomAsRead(nextRoom.id);
+      hidePurchaseChatNotifications(nextRoom.orderId);
+      chatReturnContextRef.current = returnContext;
       setPurchaseChatRoom(nextRoom);
+      return true;
     } catch (error) {
       showSuccessToast('聊天室開啟失敗', error instanceof Error ? error.message : '請稍後再試。');
+      return false;
     }
   };
 
-  const handleNotificationAction = async (notification) => {
+  const handleNotificationAction = async (notification, { returnToNotifications = false } = {}) => {
     if (!token || !notification) {
       return;
     }
@@ -2448,8 +2517,13 @@ function HomePage() {
     await markNotificationAsRead(notification.id, notification);
 
     if (isPurchaseNotification) {
-      setIsNotificationsOpen(false);
-      await handleOpenPurchaseChat({ orderId: notification.referenceId });
+      const opened = await handleOpenPurchaseChat(
+        { orderId: notification.referenceId },
+        { returnContext: returnToNotifications ? { type: 'NOTIFICATIONS' } : null }
+      );
+      if (opened && returnToNotifications) {
+        setIsNotificationsOpen(false);
+      }
       return;
     }
 
@@ -2457,7 +2531,7 @@ function HomePage() {
       const targetCampaign = await findCampaignForNotification(notification.referenceId);
 
       if (!targetCampaign) {
-        setNotificationsError('找不到這筆團購，無法開啟聊天室。');
+        setNotificationsError(`${getCampaignDisplayName(null, notification.referenceId)}已找不到，無法開啟聊天室。`);
         return;
       }
 
@@ -2490,12 +2564,15 @@ function HomePage() {
       }
 
       if (!canOpenCampaignChat(targetCampaign)) {
-        setNotificationsError('這筆團購目前無法開啟聊天室。');
+        setNotificationsError(`${getCampaignDisplayName(targetCampaign, notification.referenceId)}目前無法開啟聊天室。`);
         return;
       }
 
       await markCampaignChatNotificationsAsRead(targetCampaign.id);
-      setIsNotificationsOpen(false);
+      chatReturnContextRef.current = returnToNotifications ? { type: 'NOTIFICATIONS' } : null;
+      if (returnToNotifications) {
+        setIsNotificationsOpen(false);
+      }
       setChatCampaign(targetCampaign);
     } catch (error) {
       setNotificationsError(error.message);
@@ -2569,14 +2646,11 @@ function HomePage() {
   }, [isRefreshing]);
 
   const renderPageDots = () => (
-    showSwipeHint ? (
-      <div className="swipe-cue" aria-label="可左右滑動切換頁面">
-        <span className="swipe-cue-arrow left" aria-hidden="true">&lt;</span>
-        <span className="swipe-cue-arrow right" aria-hidden="true">&gt;</span>
-      </div>
-    ) : (
-      null
-    )
+    <div className="swipe-page-indicator" aria-label="頁面位置：可左右滑動切換">
+      {swipeTabs.map((tab) => (
+        <span key={tab} className={tab === activeType ? 'active' : ''}></span>
+      ))}
+    </div>
   );
 
   const switchActiveType = (nextType) => {
@@ -2596,58 +2670,6 @@ function HomePage() {
       return resolvedType;
     });
   };
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return undefined;
-    }
-
-    if (window.localStorage.getItem(SWIPE_HINT_SEEN_KEY) === 'true') {
-      return undefined;
-    }
-
-    let hasShown = false;
-    let idleTimerId;
-    let hideTimerId;
-
-    const hideHint = () => {
-      setShowSwipeHint(false);
-      if (hideTimerId) {
-        window.clearTimeout(hideTimerId);
-      }
-    };
-
-    const showHint = () => {
-      if (hasShown) {
-        return;
-      }
-
-      hasShown = true;
-      window.localStorage.setItem(SWIPE_HINT_SEEN_KEY, 'true');
-      setShowSwipeHint(true);
-      hideTimerId = window.setTimeout(hideHint, 4200);
-    };
-
-    const resetIdleTimer = () => {
-      if (hasShown) {
-        hideHint();
-        return;
-      }
-
-      window.clearTimeout(idleTimerId);
-      idleTimerId = window.setTimeout(showHint, 3000);
-    };
-
-    const events = ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'];
-    events.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
-    resetIdleTimer();
-
-    return () => {
-      window.clearTimeout(idleTimerId);
-      window.clearTimeout(hideTimerId);
-      events.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') {
@@ -2813,9 +2835,9 @@ function HomePage() {
 
     if (campaignForm.scenarioType === 'INSTANT') {
       if (!isWithinHoduoBusinessHours()) {
-        window.alert('現在非營業時間，但仍可建立即時團。');
+        showSuccessToast('營業時間提醒', '現在非營業時間，但仍可建立即時團。');
       } else if (isHoduoClosingSoon()) {
-        window.alert('賣場即將打烊，請留意截止與面交時間。');
+        showSuccessToast('營業時間提醒', '賣場即將打烊，請留意截止與面交時間。');
       }
     }
 
@@ -3225,7 +3247,7 @@ function HomePage() {
     });
   };
 
-  const handleOpenChat = async (deal, { showError = true } = {}) => {
+  const handleOpenChat = async (deal, { showError = true, returnContext = null } = {}) => {
     if (!token) {
       setIsLoginModalOpen(true);
       return false;
@@ -3258,6 +3280,7 @@ function HomePage() {
 
     await markCampaignChatNotificationsAsRead(campaignId);
     markChatRoomAsRead(campaignId);
+    chatReturnContextRef.current = returnContext;
     setChatCampaign(nextDeal);
     return true;
   };
@@ -3269,14 +3292,59 @@ function HomePage() {
 
   const handleOpenParticipationFromChat = async (deal) => {
     await handleOpenParticipation(deal);
+    chatReturnContextRef.current = null;
     setChatCampaign(null);
   };
 
   const handleOpenChatFromParticipation = async (deal) => {
-    setParticipationCampaign(null);
-    setParticipationQuantityDraft('1');
-    setParticipationError('');
-    await handleOpenChat(deal);
+    const returnCampaign = participationCampaign ?? deal;
+    const opened = await handleOpenChat(deal, {
+      returnContext: { type: 'PARTICIPATION', campaign: returnCampaign },
+    });
+
+    if (opened) {
+      setParticipationCampaign(null);
+      setParticipationQuantityDraft('1');
+      setParticipationError('');
+    }
+  };
+
+  const restoreChatReturnContext = () => {
+    const returnContext = chatReturnContextRef.current;
+    chatReturnContextRef.current = null;
+
+    if (returnContext?.type === 'NOTIFICATIONS') {
+      setIsNotificationsOpen(true);
+      return;
+    }
+
+    if (returnContext?.type === 'CHAT_ROOMS') {
+      setIsChatRoomsOpen(true);
+      void loadOpenChatRooms();
+      return;
+    }
+
+    if (returnContext?.type === 'PARTICIPATION' && returnContext.campaign) {
+      setParticipationCampaign(returnContext.campaign);
+      setParticipationQuantityDraft(
+        String(returnContext.campaign.hostReservedQuantity ?? returnContext.campaign.quantity ?? 1)
+      );
+      setParticipationError('');
+      return;
+    }
+
+    returnContext?.restore?.();
+  };
+
+  const handleCloseCampaignChat = () => {
+    setChatCampaign(null);
+    restoreChatReturnContext();
+  };
+
+  const handleClosePurchaseChat = () => {
+    setPurchaseChatRoom(null);
+    setPurchaseOrderFromChat(null);
+    restoreChatReturnContext();
   };
 
   const handleOpenReview = (target) => {
@@ -4336,7 +4404,9 @@ function HomePage() {
         isSoundEnabled={isNotificationSoundEnabled}
         onToggleSound={handleToggleNotificationSound}
         onClose={() => setIsNotificationsOpen(false)}
-        onNotificationAction={handleNotificationAction}
+        onNotificationAction={(notification) =>
+          handleNotificationAction(notification, { returnToNotifications: true })
+        }
       />
 
       <CreateCampaignModal
@@ -4412,7 +4482,7 @@ function HomePage() {
         isParticipantReviewCompleted={chatReviewState.isParticipantReviewed}
         isHostReviewCompleted={chatReviewState.isHostAllReviewed}
         onMarkRead={markChatRoomAsRead}
-        onClose={() => setChatCampaign(null)}
+        onClose={handleCloseCampaignChat}
       />
 
       <PurchaseChatModal
@@ -4421,7 +4491,18 @@ function HomePage() {
         token={token}
         currentUser={user}
         onRead={markPurchaseRoomAsRead}
-        onClose={() => setPurchaseChatRoom(null)}
+        onOpenOrder={(order) => setPurchaseOrderFromChat(order)}
+        onClose={handleClosePurchaseChat}
+      />
+
+      <PurchaseOrderModal
+        isOpen={Boolean(purchaseOrderFromChat)}
+        orderId={purchaseOrderFromChat?.id ?? purchaseOrderFromChat?.orderId}
+        token={token}
+        currentUser={user}
+        onOpenChat={() => setPurchaseOrderFromChat(null)}
+        onUpdated={() => void loadOpenChatRooms({ silent: true })}
+        onClose={() => setPurchaseOrderFromChat(null)}
       />
 
       <ParticipationActionModal
@@ -4464,9 +4545,7 @@ function HomePage() {
               keyword={deferredSearch}
               viewMode={dealViewMode}
               isCreateOpen={isProxyRequestFormOpen}
-              hideUnavailableRequests={hideFullCampaigns}
               onCreateOpenChange={setIsProxyRequestFormOpen}
-              onHideUnavailableRequestsChange={setHideFullCampaigns}
               onModalOpenChange={setIsProxyRequestModalOpen}
               onRequireLogin={() => setIsLoginModalOpen(true)}
               onShowToast={({ title, message }) => showSuccessToast(title, message)}
@@ -4884,8 +4963,6 @@ function HomePage() {
             initialScope="MY_ALL"
             scopeOptions={MY_PURCHASE_REQUEST_SCOPE_OPTIONS}
             scopeControl="tabs"
-            showHideUnavailableToggle={false}
-            hideUnavailableRequests={false}
             onCreateOpenChange={() => {}}
             onModalOpenChange={setIsProxyRequestModalOpen}
             onRequireLogin={() => setIsLoginModalOpen(true)}
@@ -4973,6 +5050,7 @@ function HomePage() {
                       onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
                       onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
                       onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
+                      onShare={shareCampaign}
                       showJoinAction={activeType !== 'MINE' && !isSameUserId(deal.host?.id, user?.id)}
                       isHighlighted={isHighlighted}
                     />
@@ -4980,8 +5058,6 @@ function HomePage() {
                 );
               })}
             </section>
-            {renderPageDots()}
-
             <div ref={sentinelRef} className="list-sentinel">
               {isInitialLoading || isLoadingMore ? LABELS.loadingMore : hasMore ? LABELS.loadingMore : LABELS.noMoreData}
             </div>
@@ -4991,6 +5067,7 @@ function HomePage() {
       </main>
 
       {!isSearchExpanded && renderFloatingDealViewControl()}
+      {!isSearchExpanded && renderPageDots()}
 
       <footer
         className={[

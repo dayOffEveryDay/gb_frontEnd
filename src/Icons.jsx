@@ -164,6 +164,21 @@ export function MoreIcon() {
   );
 }
 
+export function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M8.7 12.9 15.4 9m-6.7 2.1 6.7 3.9M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 export function ExpandIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

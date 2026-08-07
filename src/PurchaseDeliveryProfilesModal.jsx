@@ -5,6 +5,7 @@ import {
   fetchUserDeliveryProfiles,
   updateUserDeliveryProfile,
 } from './api';
+import ActionDialog from './ActionDialog';
 
 const EMPTY_FORM = {
   profileType: 'FACE_TO_FACE',
@@ -55,6 +56,7 @@ function PurchaseDeliveryProfilesModal({ isOpen, token, onChanged, onClose }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const loadProfiles = useCallback(async () => {
     if (!isOpen || !token) return;
@@ -117,14 +119,15 @@ function PurchaseDeliveryProfilesModal({ isOpen, token, onChanged, onClose }) {
     }
   };
 
-  const handleDelete = async (profile) => {
-    if (!window.confirm(`確定刪除「${profile.label || profile.displayText}」？`)) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
     setIsSaving(true);
     setError('');
     try {
-      await deleteUserDeliveryProfile(profile.id, token);
+      await deleteUserDeliveryProfile(deleteTarget.id, token);
       await loadProfiles();
       onChanged?.();
+      setDeleteTarget(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '常用交付資料刪除失敗');
     } finally {
@@ -154,7 +157,7 @@ function PurchaseDeliveryProfilesModal({ isOpen, token, onChanged, onClose }) {
               </div>
               <div className="delivery-profile-row-actions">
                 <button type="button" className="text-button" onClick={() => { setEditingId(profile.id); setForm(toForm(profile)); }}>編輯</button>
-                <button type="button" className="ghost-button danger" onClick={() => void handleDelete(profile)} disabled={isSaving}>刪除</button>
+                <button type="button" className="ghost-button danger" onClick={() => setDeleteTarget(profile)} disabled={isSaving}>刪除</button>
               </div>
             </article>
           ))}
@@ -190,6 +193,17 @@ function PurchaseDeliveryProfilesModal({ isOpen, token, onChanged, onClose }) {
             <button type="submit" className="create-button active" disabled={isSaving}>{isSaving ? '儲存中...' : '儲存範本'}</button>
           </div>
         </form>
+        <ActionDialog
+          isOpen={Boolean(deleteTarget)}
+          eyebrow="常用交付資料"
+          title="刪除交付範本"
+          description={`確定刪除「${deleteTarget?.label || deleteTarget?.displayText || ''}」？`}
+          confirmLabel="確認刪除"
+          confirmClassName="ghost-button danger"
+          isSubmitting={isSaving}
+          onClose={() => !isSaving && setDeleteTarget(null)}
+          onConfirm={handleDelete}
+        />
       </div>
     </div>
   );

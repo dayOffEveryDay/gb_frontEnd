@@ -11,6 +11,7 @@ import {
   uploadFiles,
 } from './api';
 import ImageGalleryModal from './ImageGalleryModal';
+import { OpenCardIcon } from './Icons';
 
 function normalizeMessage(message) {
   return {
@@ -82,7 +83,7 @@ function getOrderAvailableActions(order) {
       : [];
 }
 
-function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }) {
+function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrder, onClose }) {
   const [messages, setMessages] = useState(null);
   const [order, setOrder] = useState(null);
   const [draft, setDraft] = useState('');
@@ -109,6 +110,21 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
       (orderStatus === 'WAITING_CONFIRMATION' &&
         ((isRequester && !order?.requesterConfirmedAt && !order?.requester_confirmed_at) ||
           (isRunner && !order?.runnerConfirmedAt && !order?.runner_confirmed_at))));
+  const requesterConfirmed = Boolean(order?.requesterConfirmedAt ?? order?.requester_confirmed_at);
+  const runnerConfirmed = Boolean(order?.runnerConfirmedAt ?? order?.runner_confirmed_at);
+  const isQuoteOrder = order?.selectedQuoteId != null || order?.selected_quote_id != null;
+  const confirmationHint = (() => {
+    if (orderStatus !== 'WAITING_CONFIRMATION') return '';
+    if (!isQuoteOrder) {
+      if (requesterConfirmed) return '委託人已確認，訂單即將進入後續流程。';
+      return isRequester ? '請確認交易後，接單人即可開始處理。' : '等待委託人確認交易。';
+    }
+    const currentUserConfirmed = isRequester ? requesterConfirmed : runnerConfirmed;
+    const counterpartConfirmed = isRequester ? runnerConfirmed : requesterConfirmed;
+    if (currentUserConfirmed) return '你已確認，等待對方確認交易。';
+    if (counterpartConfirmed) return '對方已確認，請確認交易。';
+    return '雙方都需要確認後，託購訂單才會進入後續流程。';
+  })();
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
 
   useEffect(() => {
@@ -191,9 +207,10 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
   }, [isOpen, onRead, roomId, token, wsUrl]);
 
   useEffect(() => {
-    if (bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
+    const frameId = requestAnimationFrame(() => {
+      if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frameId);
   }, [messages]);
 
   if (!isOpen || !room) return null;
@@ -266,7 +283,17 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
         <div className="modal-top-row">
           <div>
             <p className="eyebrow">託購聊天室</p>
-            <h2 className="modal-title">{room.itemName || '託購交易'}</h2>
+            <button
+              type="button"
+              className="purchase-chat-order-title"
+              onClick={() => onOpenOrder?.(order ?? { id: orderId, orderId })}
+              disabled={orderId == null}
+              title="前往訂單詳情"
+              aria-label="前往訂單詳情"
+            >
+              {room.itemName || '託購交易'}
+              <OpenCardIcon />
+            </button>
             <span className="muted-copy">
               {room.counterpartName ? `交易對象：${room.counterpartName}` : ''} · {isConnected ? '即時連線' : '重新連線中'}
             </span>
@@ -274,9 +301,9 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onClose }
           <button type="button" className="modal-close" onClick={onClose}>關閉</button>
         </div>
 
-        {(canConfirmOrder || orderMessage) && (
+        {(canConfirmOrder || orderMessage || confirmationHint) && (
           <div className="chat-status-row purchase-chat-order-status">
-            <span>{orderMessage || '雙方都需要確認後，託購訂單才會進入後續流程。'}</span>
+            <span>{orderMessage || confirmationHint}</span>
             {canConfirmOrder && (
               <button
                 type="button"

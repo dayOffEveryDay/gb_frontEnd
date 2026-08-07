@@ -1,4 +1,4 @@
-import { AvatarIcon, ChatRoomsIcon, MoreIcon } from './Icons';
+import { AvatarIcon, ChatRoomsIcon, MoreIcon, ShareIcon } from './Icons';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -66,14 +66,16 @@ function DealCard({
   onOpenChat,
   onOpenParticipation,
   onOpenUserProfile,
+  onShare,
   showJoinAction = true,
   isHighlighted = false,
 }) {
   const isChatEnabled = typeof onOpenChat === 'function';
   const canManageParticipation = typeof onOpenParticipation === 'function';
   const statusSource = (deal.status ?? deal.campaignStatus ?? deal.campaign_status ?? deal.state ?? '').toString().toUpperCase();
-  const isSoldOut = statusSource.includes('FULL') || Number(deal.availableQuantity) <= 0;
-  const hasJoinAction = showJoinAction && !isSoldOut;
+  const isFailed = ['FAILED', 'CANCELLED'].some((status) => statusSource.includes(status));
+  const isSoldOut = !isFailed && (statusSource.includes('FULL') || Number(deal.availableQuantity) <= 0);
+  const hasJoinAction = showJoinAction && !isSoldOut && !isFailed;
   const remainingQuantityStyle = getRemainingQuantityStyle(deal);
 
   const handleOpenUserProfile = (event) => {
@@ -98,9 +100,11 @@ function DealCard({
         .join(' ')}
       onClick={isChatEnabled ? () => onOpenChat(deal) : undefined}
     >
-      {isSoldOut && (
+      {(isFailed || isSoldOut) && (
         <span className="deal-full-stamp" aria-hidden="true">
-          <span className="deal-full-stamp-badge">滿</span>
+          <span className={isFailed ? 'deal-full-stamp-badge deal-failed-stamp-badge' : 'deal-full-stamp-badge'}>
+            {isFailed ? '失敗' : '滿'}
+          </span>
         </span>
       )}
 
@@ -126,8 +130,20 @@ function DealCard({
             <div className="deal-tag-row">
               <span className={`type-pill ${getTypeClass(deal.scenarioType)}`}>{getScenarioLabel(deal.scenarioType)}</span>
               <span className="type-pill category-pill">{deal.categoryName || labels.noValue}</span>
-              {canManageParticipation && (
-                <div className="deal-tag-actions">
+              <div className="deal-tag-actions">
+                <button
+                  type="button"
+                  className="chat-action-button share-action-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onShare?.(deal);
+                  }}
+                  aria-label={`分享 ${deal.itemName}`}
+                  title="分享"
+                >
+                  <ShareIcon />
+                </button>
+                {canManageParticipation && (
                   <button
                     type="button"
                     className="chat-action-button more-action-button"
@@ -140,8 +156,8 @@ function DealCard({
                   >
                     <MoreIcon />
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
 

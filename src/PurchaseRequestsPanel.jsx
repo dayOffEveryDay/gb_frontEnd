@@ -15,7 +15,6 @@ import {
   fetchMyAssignedPurchaseRequests,
   fetchMyCreatedPurchaseRequests,
   fetchMyQuotedPurchaseRequests,
-  fetchMyReceivedPurchaseOrderReviews,
   fetchPurchaseOrders,
   fetchPurchaseRequestQuotes,
   fetchPurchaseRequests,
@@ -30,7 +29,9 @@ import { formatDateTime } from './homeUtils';
 import ImageGalleryModal from './ImageGalleryModal';
 import PurchaseOrderModal from './PurchaseOrderModal';
 import PurchaseDeliveryProfilesModal from './PurchaseDeliveryProfilesModal';
-import { DiagonalExpandIcon } from './Icons';
+import { AvatarIcon, DiagonalExpandIcon } from './Icons';
+import { sharePurchaseRequest } from './shareUtils';
+import ActionDialog from './ActionDialog';
 
 const PAGE_SIZE = 20;
 const MAX_PURCHASE_REQUEST_IMAGES = 3;
@@ -38,13 +39,6 @@ const MAX_PURCHASE_REQUEST_IMAGES = 3;
 function getImageFileKey(file) {
   return `${file.name}-${file.size}-${file.lastModified}`;
 }
-
-const SCOPE_OPTIONS = [
-  { value: 'MARKET', label: '全部委託' },
-  { value: 'CREATED', label: '我發起' },
-  { value: 'ASSIGNED', label: '我承接' },
-  { value: 'QUOTED', label: '我報價' },
-];
 
 // 此設定同時提供首頁「我的託購」頁籤使用。
 // eslint-disable-next-line react-refresh/only-export-components
@@ -106,6 +100,12 @@ const STATUS_OPTIONS = [
   { value: 'EXPIRED', label: STATUS_LABELS.EXPIRED },
 ];
 
+const MARKET_STATUS_OPTIONS = [
+  { value: 'ALL', label: '全部' },
+  { value: 'OPEN', label: '直接承接' },
+  { value: 'QUOTING', label: '可報價' },
+];
+
 const INITIAL_FORM = {
   itemName: '',
   itemDescription: '',
@@ -144,6 +144,7 @@ function normalizePurchaseRequest(item) {
     : Array.isArray(item?.image_urls)
       ? item.image_urls
       : [];
+  const requester = item?.requester ?? item?.requesterSummary ?? item?.requester_summary ?? {};
 
   return {
     ...item,
@@ -167,14 +168,20 @@ function normalizePurchaseRequest(item) {
     minCreditScore: item?.minCreditScore ?? item?.min_credit_score ?? null,
     description: item?.itemDescription ?? item?.item_description ?? item?.description ?? '',
     status: (item?.status ?? 'OPEN').toString().toUpperCase(),
-    requester: normalizeUserSummary(
-      item?.requester ?? {
-        id: item?.requesterId ?? item?.requester_id,
-        displayName: item?.requesterDisplayName ?? item?.requester_display_name,
-        profileImageUrl: item?.requesterProfileImageUrl ?? item?.requester_profile_image_url,
-        creditScore: item?.requesterCreditScore ?? item?.requester_credit_score,
-      }
-    ),
+    requester: normalizeUserSummary({
+      id: item?.requesterId ?? item?.requester_id ?? requester.id ?? requester.userId ?? requester.user_id,
+      displayName:
+        item?.requesterDisplayName ?? item?.requester_display_name ?? requester.displayName ?? requester.display_name,
+      profileImageUrl:
+        item?.requesterProfileImageUrl ??
+        item?.requester_profile_image_url ??
+        requester.profileImageUrl ??
+        requester.profile_image_url ??
+        requester.avatarUrl ??
+        requester.avatar_url,
+      creditScore:
+        item?.requesterCreditScore ?? item?.requester_credit_score ?? requester.creditScore ?? requester.credit_score,
+    }),
     assignedRunner: normalizeUserSummary(item?.assignedRunner ?? item?.assigned_runner),
     acceptedQuoteId: item?.acceptedQuoteId ?? item?.accepted_quote_id ?? null,
     assignedAt: item?.assignedAt ?? item?.assigned_at ?? '',
@@ -904,49 +911,6 @@ function PurchaseRequestReviewModal({ request, isSubmitting, error, onClose, onS
   );
 }
 
-function PurchaseReceivedReviewsModal({ isOpen, token, onClose }) {
-  const [reviews, setReviews] = useState(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (!isOpen || !token) return undefined;
-    let cancelled = false;
-    fetchMyReceivedPurchaseOrderReviews({ page: 0, size: 100 }, token)
-      .then((data) => {
-        if (!cancelled) setReviews(Array.isArray(data?.content) ? data.content : []);
-      })
-      .catch((nextError) => {
-        if (!cancelled) setError(nextError instanceof Error ? nextError.message : '評價載入失敗');
-      })
-    return () => { cancelled = true; };
-  }, [isOpen, token]);
-
-  if (!isOpen) return null;
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="login-modal purchase-received-reviews-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-top-row">
-          <div><p className="eyebrow">託購信用紀錄</p><h2 className="modal-title">收到的評價</h2></div>
-          <button type="button" className="modal-close" onClick={onClose}>關閉</button>
-        </div>
-        {reviews == null && <p className="muted-copy">載入評價中...</p>}
-        {error && <p className="inline-error">{error}</p>}
-        {reviews != null && !error && reviews.length === 0 && <p className="muted-copy">目前沒有收到的託購評價。</p>}
-        <div className="purchase-received-review-list">
-          {(reviews ?? []).map((review) => (
-            <article key={review.id}>
-              <div><strong>{review.itemName || `訂單 #${review.orderId}`}</strong><span>{'★'.repeat(Math.max(0, Math.min(5, Number(review.rating) || 0)))}</span></div>
-              <span>{review.reviewerName || '交易對象'} · {formatDateTime(review.createdAt)}</span>
-              {review.comment && <p>{review.comment}</p>}
-              <small>{review.isScoreCounted ? '已計入信用分' : '未計入信用分'}</small>
-            </article>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function PurchaseRequestCancelConfirmModal({ request, isSubmitting, onClose, onConfirm }) {
   if (!request) {
     return null;
@@ -1138,10 +1102,12 @@ function PurchaseRequestCard({
   onManageImages,
   onRequireLogin,
   onExpand,
+  onShare,
 }) {
   const isRequester = isSameUser(request.requester?.id, currentUser?.id);
   const isRunner = isSameUser(request.assignedRunner?.id ?? request.runner?.id, currentUser?.id);
   const cardStatus = request.orderStatus || request.status;
+  const requesterProfileImageUrl = request.requester?.profileImageUrl || (isRequester ? currentUser?.profileImageUrl : '');
   const image = request.imageUrls[0] ?? '';
   const blockedLabel = getBlockedLabel(request.actBlockedReason);
   const isBusy = actionId === request.id;
@@ -1163,7 +1129,7 @@ function PurchaseRequestCard({
   const canOpenChat = canOpenOrder && request.chatRoomId != null;
   const canManageOwnQuote = request.quoteId != null && request.quoteStatus === 'ACTIVE';
   const canEditRequest = isRequester && ['OPEN', 'QUOTING'].includes(request.status);
-  const hasActionMenu = canViewQuotes || canManageImages || canCancelRequest || canExtendRequest || canOpenOrder || canManageOwnQuote || canEditRequest;
+  const hasActionMenu = Boolean(onShare) || canViewQuotes || canManageImages || canCancelRequest || canExtendRequest || canOpenOrder || canManageOwnQuote || canEditRequest;
   const hasInlineActions =
     (!currentUser && request.status === 'OPEN') ||
     (currentUser && request.status === 'OPEN' && request.rewardType === 'FIXED' && !isRequester) ||
@@ -1198,6 +1164,7 @@ function PurchaseRequestCard({
           'compact-market-row',
           'purchase-request-compact-row',
           hasInlineActions ? 'purchase-request-compact-row-with-actions' : '',
+          hasActionMenu ? 'purchase-request-compact-row-with-menu' : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -1217,6 +1184,15 @@ function PurchaseRequestCard({
             </button>
             {isActionMenuOpen && (
               <div className="purchase-request-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onShare?.(request);
+                    setIsActionMenuOpen(false);
+                  }}
+                >
+                  分享到 LINE
+                </button>
                 {canViewQuotes && (
                   <button
                     type="button"
@@ -1323,10 +1299,10 @@ function PurchaseRequestCard({
           <div className="compact-market-bottom">
             <span className="compact-market-host purchase-request-compact-requester">
               <span className="compact-host-avatar">
-                {request.requester?.profileImageUrl ? (
-                  <img src={request.requester.profileImageUrl} alt="" className="avatar-image" />
+                {requesterProfileImageUrl ? (
+                  <img src={requesterProfileImageUrl} alt="" className="avatar-image" />
                 ) : (
-                  <span>{requesterName.slice(0, 1)}</span>
+                  <AvatarIcon />
                 )}
               </span>
               <span>{requesterName}</span>
@@ -1436,6 +1412,15 @@ function PurchaseRequestCard({
           </button>
           {isActionMenuOpen && (
             <div className="purchase-request-menu">
+              <button
+                type="button"
+                onClick={() => {
+                  void onShare?.(request);
+                  setIsActionMenuOpen(false);
+                }}
+              >
+                分享到 LINE
+              </button>
               {canViewQuotes && (
                 <button
                   type="button"
@@ -1568,10 +1553,10 @@ function PurchaseRequestCard({
           <span className="footer-label">委託人</span>
           <span className="purchase-request-requester">
             <span className="purchase-request-requester-avatar">
-              {request.requester?.profileImageUrl ? (
-                <img src={request.requester.profileImageUrl} alt="" />
+              {requesterProfileImageUrl ? (
+                <img src={requesterProfileImageUrl} alt="" />
               ) : (
-                <span>{(request.requester?.displayName ?? '?').slice(0, 1)}</span>
+                <AvatarIcon />
               )}
             </span>
             <strong>{request.requester?.displayName ?? '--'}</strong>
@@ -1672,12 +1657,9 @@ function PurchaseRequestsPanel({
   viewMode = 'card',
   isCreateOpen,
   initialScope = 'MARKET',
-  scopeOptions = SCOPE_OPTIONS,
+  scopeOptions = [],
   scopeControl = 'dropdown',
-  showHideUnavailableToggle = true,
-  hideUnavailableRequests = false,
   onCreateOpenChange,
-  onHideUnavailableRequestsChange,
   onModalOpenChange,
   onRequireLogin,
   onShowToast,
@@ -1701,13 +1683,14 @@ function PurchaseRequestsPanel({
   const [reviewTarget, setReviewTarget] = useState(null);
   const [reviewError, setReviewError] = useState('');
   const [isReviewing, setIsReviewing] = useState(false);
-  const [isReceivedReviewsOpen, setIsReceivedReviewsOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [actionDialogTarget, setActionDialogTarget] = useState(null);
+  const [extendDeadline, setExtendDeadline] = useState('');
+  const [extendError, setExtendError] = useState('');
   const [orderTarget, setOrderTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [editError, setEditError] = useState('');
   const [expandedCompactRequestId, setExpandedCompactRequestId] = useState('');
-  const [isScopeMenuOpen, setIsScopeMenuOpen] = useState(false);
   const [imageOrderState, setImageOrderState] = useState({
     request: null,
     images: [],
@@ -1825,13 +1808,13 @@ function PurchaseRequestsPanel({
   }, [viewMode]);
 
   useEffect(() => {
-    const hasInternalModalOpen = Boolean(quoteTarget || quoteEditTarget || reviewTarget || cancelTarget || orderTarget || editTarget || isReceivedReviewsOpen || imageOrderState.request);
+    const hasInternalModalOpen = Boolean(quoteTarget || quoteEditTarget || reviewTarget || cancelTarget || orderTarget || editTarget || imageOrderState.request);
     onModalOpenChange?.(hasInternalModalOpen);
 
     return () => {
       onModalOpenChange?.(false);
     };
-  }, [cancelTarget, editTarget, imageOrderState.request, isReceivedReviewsOpen, onModalOpenChange, orderTarget, quoteEditTarget, quoteTarget, reviewTarget]);
+  }, [cancelTarget, editTarget, imageOrderState.request, onModalOpenChange, orderTarget, quoteEditTarget, quoteTarget, reviewTarget]);
 
   const refresh = () => setRefreshKey((current) => current + 1);
 
@@ -2006,8 +1989,7 @@ function PurchaseRequestsPanel({
     }
   };
 
-  const handleWithdrawQuote = async (request) => {
-    if (!window.confirm('撤回後不能再次建立同一筆委託的報價，確定撤回嗎？')) return;
+  const LEGACY_HANDLE_WITHDRAW_QUOTE = async (request) => {
     await withAction(
       request,
       () => withdrawPurchaseRequestQuote(request.quoteId, token),
@@ -2226,9 +2208,9 @@ function PurchaseRequestsPanel({
     }
   };
 
-  const handleDeleteRequestImage = async (imageUrl, imageIndex) => {
+  const LEGACY_HANDLE_DELETE_REQUEST_IMAGE = async (imageUrl, imageIndex) => {
     const request = imageOrderState.request;
-    if (!request || !token || !window.confirm('確定刪除這張圖片？')) return;
+    if (!request || !token) return;
     const path = (() => {
       try {
         return new URL(imageUrl, window.location.origin).pathname;
@@ -2324,14 +2306,13 @@ function PurchaseRequestsPanel({
     }
   };
 
-  const handleExtend = async (request) => {
+  const LEGACY_HANDLE_EXTEND = async (request) => {
     if (!token) {
       onRequireLogin?.();
       return;
     }
 
-    const currentValue = request.deadlineAt ? request.deadlineAt.slice(0, 16) : '';
-    const nextValue = window.prompt('請輸入新的委託期限（YYYY-MM-DDTHH:mm）', currentValue);
+    const nextValue = '';
     if (!nextValue) {
       return;
     }
@@ -2342,6 +2323,60 @@ function PurchaseRequestsPanel({
       () => extendPurchaseRequest(request.id, requestExpireTime, token),
       '委託期限已延長。'
     );
+  };
+
+  const handleWithdrawQuote = (request) => setActionDialogTarget({ type: 'WITHDRAW_QUOTE', request });
+
+  const handleDeleteRequestImage = (imageUrl, imageIndex) => {
+    if (imageOrderState.request) setActionDialogTarget({ type: 'DELETE_IMAGE', imageUrl, imageIndex, request: imageOrderState.request });
+  };
+
+  const handleExtend = (request) => {
+    if (!token) {
+      onRequireLogin?.();
+      return;
+    }
+    setExtendError('');
+    setExtendDeadline(request.deadlineAt ? request.deadlineAt.slice(0, 16) : '');
+    setActionDialogTarget({ type: 'EXTEND', request });
+  };
+
+  const handleActionDialogConfirm = async () => {
+    const target = actionDialogTarget;
+    if (!target || !token) return;
+    if (target.type === 'WITHDRAW_QUOTE') {
+      await withAction(target.request, () => withdrawPurchaseRequestQuote(target.request.quoteId, token), '已撤回報價。');
+      setActionDialogTarget(null);
+      return;
+    }
+    if (target.type === 'EXTEND') {
+      if (!extendDeadline) {
+        setExtendError('請選擇新的委託期限。');
+        return;
+      }
+      const requestExpireTime = extendDeadline.length === 16 ? `${extendDeadline}:00` : extendDeadline;
+      await withAction(target.request, () => extendPurchaseRequest(target.request.id, requestExpireTime, token), '委託期限已延長。');
+      setActionDialogTarget(null);
+      return;
+    }
+    if (target.type === 'DELETE_IMAGE') {
+      const path = (() => {
+        try { return new URL(target.imageUrl, window.location.origin).pathname; } catch { return target.imageUrl; }
+      })();
+      const fileName = decodeURIComponent(path.split('/').filter(Boolean).pop() ?? '');
+      if (!fileName) return;
+      setImageOrderState((current) => ({ ...current, isSaving: true, error: '', message: '' }));
+      try {
+        const response = await deletePurchaseRequestImage(target.request.id, fileName, token);
+        const nextImages = Array.isArray(response?.imageUrls) ? response.imageUrls : imageOrderState.images.filter((_, index) => index !== target.imageIndex);
+        const updatedRequest = { ...target.request, imageUrls: nextImages };
+        setRequests((current) => current.map((item) => (String(item.id) === String(target.request.id) ? { ...item, imageUrls: nextImages } : item)));
+        setImageOrderState((current) => ({ ...current, request: updatedRequest, images: nextImages, originalImages: nextImages, activeIndex: Math.min(current.activeIndex, Math.max(nextImages.length - 1, 0)), canReorder: nextImages.length > 1, isSaving: false, message: '圖片已刪除。' }));
+        setActionDialogTarget(null);
+      } catch (nextError) {
+        setImageOrderState((current) => ({ ...current, isSaving: false, error: nextError instanceof Error ? nextError.message : '圖片刪除失敗。' }));
+      }
+    }
   };
 
   const emptyText = useMemo(() => {
@@ -2363,25 +2398,27 @@ function PurchaseRequestsPanel({
   const visibleRequests = useMemo(() => {
     let nextRequests = requests;
 
-    if (hideUnavailableRequests && scope === 'MARKET') {
-      nextRequests = nextRequests.filter((request) => ['OPEN', 'QUOTING'].includes(request.status));
-    }
-
     if (statusFilter !== 'ALL') {
       nextRequests = nextRequests.filter((request) => request.status === statusFilter);
     }
 
     return nextRequests;
-  }, [hideUnavailableRequests, requests, scope, statusFilter]);
+  }, [requests, statusFilter]);
 
-  const currentScopeLabel = scopeOptions.find((option) => option.value === scope)?.label ?? scopeOptions[0]?.label ?? '';
   const useScopeTabs = scopeControl === 'tabs';
+  const statusOptions = scope === 'MARKET' ? MARKET_STATUS_OPTIONS : STATUS_OPTIONS;
+
+  useEffect(() => {
+    if (!statusOptions.some((option) => option.value === statusFilter)) {
+      setStatusFilter('ALL');
+    }
+  }, [statusFilter, statusOptions]);
 
   return (
     <>
       <section className="purchase-request-toolbar">
-        <div className="purchase-request-controls">
-          {useScopeTabs ? (
+        {useScopeTabs && (
+          <div className="purchase-request-controls">
             <section className="category-strip purchase-request-scope-tabs" aria-label="委託範圍">
               {scopeOptions.map((option) => (
                 <button
@@ -2394,84 +2431,29 @@ function PurchaseRequestsPanel({
                 </button>
               ))}
             </section>
-          ) : (
-            <div
-              className="purchase-request-scope-select"
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) {
-                  setIsScopeMenuOpen(false);
-                }
-              }}
-            >
-              <button
-                type="button"
-                className="purchase-request-scope-trigger"
-                onClick={() => setIsScopeMenuOpen((current) => !current)}
-                aria-haspopup="listbox"
-                aria-expanded={isScopeMenuOpen}
-              >
-                <span>{currentScopeLabel}</span>
-                <span className="purchase-request-scope-chevron" aria-hidden="true"></span>
-              </button>
-              {isScopeMenuOpen && (
-                <div className="purchase-request-scope-menu" role="listbox" aria-label="委託範圍">
-                  {scopeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={scope === option.value ? 'active' : ''}
-                      role="option"
-                      aria-selected={scope === option.value}
-                      onClick={() => {
-                        setScope(option.value);
-                        setIsScopeMenuOpen(false);
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {showHideUnavailableToggle && (
-            <label className="purchase-request-hide-toggle">
-              <input
-                type="checkbox"
-                checked={hideUnavailableRequests}
-                onChange={(event) => onHideUnavailableRequestsChange?.(event.target.checked)}
-              />
-              <span className="purchase-request-hide-toggle-track" aria-hidden="true">
-                <span></span>
-              </span>
-              <span>隱藏已滿</span>
-            </label>
-          )}
-          {token && (
-            <button type="button" className="text-button" onClick={() => setIsReceivedReviewsOpen(true)}>
-              收到的評價
-            </button>
-          )}
-        </div>
+          </div>
+        )}
         <section className="mine-status-inline-filter purchase-request-status-filter">
-          <span className="mine-status-filter-label">狀態</span>
-          <div className="mine-status-filter-options">
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={statusFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
-                onClick={() => setStatusFilter(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
+          {useScopeTabs && <span className="mine-status-filter-label">狀態</span>}
+          <div className="purchase-request-status-row">
+            <div className="mine-status-filter-options">
+              {statusOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={statusFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
+                  onClick={() => setStatusFilter(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         </section>
         <label className="mine-status-filter purchase-request-status-select">
           <span className="mine-status-filter-label">狀態</span>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            {STATUS_OPTIONS.map((option) => (
+            {statusOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -2513,6 +2495,7 @@ function PurchaseRequestsPanel({
               onReview={handleOpenReview}
               onOpenOrder={setOrderTarget}
               onOpenChat={onOpenPurchaseChat}
+              onShare={sharePurchaseRequest}
               onEditOwnQuote={(item) => {
                 setQuoteSubmitError('');
                 setQuoteEditTarget(item);
@@ -2534,11 +2517,6 @@ function PurchaseRequestsPanel({
 
           return (
             <div key={requestKey} className="mine-expanded-card purchase-request-expanded-card">
-              <div className="mine-expanded-card-actions">
-                <button type="button" className="text-button" onClick={() => setExpandedCompactRequestId('')}>
-                  收合
-                </button>
-              </div>
               {requestCard}
             </div>
           );
@@ -2570,6 +2548,20 @@ function PurchaseRequestsPanel({
         onClose={() => setCancelTarget(null)}
         onConfirm={handleConfirmCancel}
       />
+
+      <ActionDialog
+        isOpen={Boolean(actionDialogTarget)}
+        eyebrow="託購委託"
+        title={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回報價' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '刪除圖片' : '延長委託期限'}
+        description={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回後不能再次建立同一筆委託的報價。' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '確定刪除這張圖片？' : '請設定新的委託期限。'}
+        confirmLabel={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '確認撤回' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '確認刪除' : '確認延長'}
+        confirmClassName={actionDialogTarget?.type === 'EXTEND' ? 'save-button' : 'ghost-button danger'}
+        isSubmitting={Boolean(actionDialogTarget?.request) && actionId === actionDialogTarget.request.id || imageOrderState.isSaving}
+        onClose={() => !imageOrderState.isSaving && setActionDialogTarget(null)}
+        onConfirm={handleActionDialogConfirm}
+      >
+        {actionDialogTarget?.type === 'EXTEND' && <label className="form-field"><span>新的委託期限 *</span><input type="datetime-local" value={extendDeadline} onChange={(event) => { setExtendDeadline(event.target.value); setExtendError(''); }} autoFocus />{extendError && <p className="inline-error">{extendError}</p>}</label>}
+      </ActionDialog>
 
       <PurchaseRequestQuoteModal
         key={quoteTarget ? `create-${quoteTarget.id}` : 'create-closed'}
@@ -2637,8 +2629,9 @@ function PurchaseRequestsPanel({
         orderId={orderTarget?.orderId}
         token={token}
         currentUser={user}
-        onOpenChat={(order) => {
-          onOpenPurchaseChat?.({
+        onOpenChat={async (order) => {
+          const returnOrderTarget = orderTarget;
+          const opened = await onOpenPurchaseChat?.({
             ...orderTarget,
             ...order,
             id: order.chatRoomId,
@@ -2648,8 +2641,15 @@ function PurchaseRequestsPanel({
             counterpartId: String(order.requesterId) === String(user?.id) ? order.runnerId : order.requesterId,
             counterpartName:
               String(order.requesterId) === String(user?.id) ? order.runnerDisplayName : order.requesterDisplayName,
+          }, {
+            returnContext: {
+              type: 'PURCHASE_ORDER',
+              restore: () => setOrderTarget(returnOrderTarget),
+            },
           });
-          setOrderTarget(null);
+          if (opened) {
+            setOrderTarget(null);
+          }
         }}
         onUpdated={() => {
           refresh();
@@ -2658,11 +2658,6 @@ function PurchaseRequestsPanel({
         onClose={() => setOrderTarget(null)}
       />
 
-      <PurchaseReceivedReviewsModal
-        isOpen={isReceivedReviewsOpen}
-        token={token}
-        onClose={() => setIsReceivedReviewsOpen(false)}
-      />
     </>
   );
 }

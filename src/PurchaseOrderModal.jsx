@@ -16,6 +16,7 @@ import {
   startPurchaseOrder,
 } from './api';
 import { formatDateTime } from './homeUtils';
+import ActionDialog from './ActionDialog';
 
 const ORDER_STATUS_LABELS = {
   WAITING_CONFIRMATION: '等待雙方確認',
@@ -66,8 +67,8 @@ function getLabel(map, value) {
   return map[key] ?? value ?? '--';
 }
 
-function promptRequired(message, defaultValue = '') {
-  const value = window.prompt(message, defaultValue);
+function UNUSED_PROMPT_REQUIRED() {
+  const value = null;
   if (value == null) return null;
   const normalized = value.trim();
   return normalized || null;
@@ -93,6 +94,16 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
   const [busyAction, setBusyAction] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [isUnavailableDialogOpen, setIsUnavailableDialogOpen] = useState(false);
+  const [unavailableReason, setUnavailableReason] = useState('');
+  const [unavailableStoreName, setUnavailableStoreName] = useState('');
+  const [unavailableError, setUnavailableError] = useState('');
+  const [actionDialog, setActionDialog] = useState('');
+  const [actionDialogError, setActionDialogError] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
+  const [shippingForm, setShippingForm] = useState({ logisticsProvider: '', trackingNumber: '', trackingUrl: '' });
+  const [abnormalForm, setAbnormalForm] = useState({ abnormalType: 'OTHER', description: '' });
+  const [abnormalResponse, setAbnormalResponse] = useState('');
 
   const loadOrder = useCallback(async () => {
     if (!isOpen || !token || orderId == null) return;
@@ -115,11 +126,19 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
   useEffect(() => {
     if (isOpen) {
       setMessage('');
+      setIsUnavailableDialogOpen(false);
+      setUnavailableReason('');
+      setUnavailableStoreName('');
+      setUnavailableError('');
+      setActionDialog('');
+      setActionDialogError('');
       void loadOrder();
     } else {
       setOrder(null);
       setEvents([]);
       setError('');
+      setIsUnavailableDialogOpen(false);
+      setActionDialog('');
     }
   }, [isOpen, loadOrder]);
 
@@ -142,8 +161,10 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
       setMessage(successMessage);
       onUpdated?.(updated);
       await loadOrder();
+      return true;
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '訂單操作失敗');
+      return false;
     } finally {
       setBusyAction('');
     }
@@ -156,10 +177,9 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
       '已完成交易確認。'
     );
 
-  const handleCancel = () => {
-    const reason = promptRequired('請輸入取消原因');
+  const LEGACY_HANDLE_CANCEL = () => {
+    const reason = UNUSED_PROMPT_REQUIRED();
     if (!reason) return;
-    if (!window.confirm('取消訂單可能扣除信用分，確定繼續嗎？')) return;
     void runAction(
       'CANCEL',
       () =>
@@ -170,23 +190,40 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
     );
   };
 
-  const handleUnavailable = () => {
-    const reason = promptRequired('請輸入缺貨原因');
-    if (!reason) return;
-    const storeName = window.prompt('門市名稱（可留空）', '')?.trim() || undefined;
-    void runAction(
+  const handleSubmitUnavailable = async (event) => {
+    event.preventDefault();
+    const reason = unavailableReason.trim();
+
+    if (!reason) {
+      setUnavailableError('請輸入缺貨原因。');
+      return;
+    }
+
+    setUnavailableError('');
+    const succeeded = await runAction(
       'ITEM_UNAVAILABLE',
-      () => markPurchaseOrderItemUnavailable(orderId, { reason, storeName, imageUrls: [] }, token),
+      () =>
+        markPurchaseOrderItemUnavailable(
+          orderId,
+          { reason, storeName: unavailableStoreName.trim() || undefined, imageUrls: [] },
+          token
+        ),
       '已回報商品缺貨。'
     );
+
+    if (succeeded) {
+      setIsUnavailableDialogOpen(false);
+      setUnavailableReason('');
+      setUnavailableStoreName('');
+    }
   };
 
-  const handleShip = () => {
-    const logisticsProvider = promptRequired('請輸入物流公司');
+  const LEGACY_HANDLE_SHIP = () => {
+    const logisticsProvider = UNUSED_PROMPT_REQUIRED();
     if (!logisticsProvider) return;
-    const trackingNumber = promptRequired('請輸入物流單號');
+    const trackingNumber = UNUSED_PROMPT_REQUIRED();
     if (!trackingNumber) return;
-    const trackingUrl = window.prompt('物流查詢網址（可留空）', '')?.trim() || undefined;
+    const trackingUrl = undefined;
     void runAction(
       'SHIP',
       () => shipPurchaseOrder(orderId, { logisticsProvider, trackingNumber, trackingUrl }, token),
@@ -194,14 +231,14 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
     );
   };
 
-  const handleReportAbnormal = () => {
+  const LEGACY_HANDLE_REPORT_ABNORMAL = () => {
     const abnormalType =
-      window.prompt(
+      String(
         '異常類型：REQUESTER_NO_SHOW、RUNNER_NO_SHOW、RUNNER_NOT_DELIVERED、REQUESTER_UNREACHABLE、ITEM_NOT_RECEIVED、OTHER',
         'OTHER'
       )?.trim().toUpperCase() || '';
     if (!abnormalType) return;
-    const description = promptRequired('請說明異常狀況');
+    const description = UNUSED_PROMPT_REQUIRED();
     if (!description) return;
     void runAction(
       'REPORT_ABNORMAL',
@@ -210,8 +247,8 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
     );
   };
 
-  const handleRespondAbnormal = () => {
-    const responseText = promptRequired('請輸入異常回應內容');
+  const LEGACY_HANDLE_RESPOND_ABNORMAL = () => {
+    const responseText = UNUSED_PROMPT_REQUIRED();
     if (!responseText) return;
     void runAction(
       'RESPOND_ABNORMAL',
@@ -220,9 +257,90 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
     );
   };
 
-  const handleBlock = async () => {
-    if (counterpartId == null || !window.confirm(`確定封鎖 ${counterpartName || '交易對象'}？封鎖後雙方不能成立新交易。`)) return;
+  const LEGACY_HANDLE_BLOCK = async () => {
+    if (counterpartId == null) return;
     await runAction('BLOCK', () => blockPurchaseUser(counterpartId, token), '已封鎖交易對象。');
+  };
+
+  const closeActionDialog = () => {
+    if (busyAction) return;
+    setActionDialog('');
+    setActionDialogError('');
+  };
+
+  const handleCancel = async () => {
+    const reason = cancelReason.trim();
+    if (!reason) {
+      setActionDialogError('請輸入取消原因。');
+      return;
+    }
+    const succeeded = await runAction(
+      'CANCEL',
+      () => (isRequester ? cancelPurchaseOrderAsRequester(orderId, { reason }, token) : cancelPurchaseOrderAsRunner(orderId, { reason }, token)),
+      '訂單已取消。'
+    );
+    if (succeeded) {
+      setCancelReason('');
+      closeActionDialog();
+    }
+  };
+
+  const handleShip = async () => {
+    const logisticsProvider = shippingForm.logisticsProvider.trim();
+    const trackingNumber = shippingForm.trackingNumber.trim();
+    if (!logisticsProvider || !trackingNumber) {
+      setActionDialogError('請填寫物流公司與物流單號。');
+      return;
+    }
+    const succeeded = await runAction(
+      'SHIP',
+      () => shipPurchaseOrder(orderId, { logisticsProvider, trackingNumber, trackingUrl: shippingForm.trackingUrl.trim() || undefined }, token),
+      '已送出出貨資訊。'
+    );
+    if (succeeded) {
+      setShippingForm({ logisticsProvider: '', trackingNumber: '', trackingUrl: '' });
+      closeActionDialog();
+    }
+  };
+
+  const handleReportAbnormal = async () => {
+    const description = abnormalForm.description.trim();
+    if (!description) {
+      setActionDialogError('請說明異常狀況。');
+      return;
+    }
+    const succeeded = await runAction(
+      'REPORT_ABNORMAL',
+      () => reportPurchaseOrderAbnormal(orderId, { abnormalType: abnormalForm.abnormalType, description, imageUrls: [] }, token),
+      '已提出異常回報，等待對方回應。'
+    );
+    if (succeeded) {
+      setAbnormalForm({ abnormalType: 'OTHER', description: '' });
+      closeActionDialog();
+    }
+  };
+
+  const handleRespondAbnormal = async () => {
+    const responseText = abnormalResponse.trim();
+    if (!responseText) {
+      setActionDialogError('請輸入異常回應內容。');
+      return;
+    }
+    const succeeded = await runAction(
+      'RESPOND_ABNORMAL',
+      () => respondPurchaseOrderAbnormal(orderId, { responseText, imageUrls: [] }, token),
+      '已回應異常。'
+    );
+    if (succeeded) {
+      setAbnormalResponse('');
+      closeActionDialog();
+    }
+  };
+
+  const handleBlock = async () => {
+    if (counterpartId == null) return;
+    const succeeded = await runAction('BLOCK', () => blockPurchaseUser(counterpartId, token), '已封鎖交易對象。');
+    if (succeeded) closeActionDialog();
   };
 
   return (
@@ -262,14 +380,14 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
               )}
               {availableActions.has('CONFIRM') && <button type="button" className="save-button" onClick={() => void handleConfirm()} disabled={Boolean(busyAction)}>確認交易</button>}
               {availableActions.has('START') && <button type="button" className="save-button" onClick={() => void runAction('START', () => startPurchaseOrder(orderId, token), '已開始處理訂單。')} disabled={Boolean(busyAction)}>開始採買</button>}
-              {availableActions.has('ITEM_UNAVAILABLE') && <button type="button" className="ghost-button" onClick={handleUnavailable} disabled={Boolean(busyAction)}>回報缺貨</button>}
-              {availableActions.has('SHIP') && <button type="button" className="save-button" onClick={handleShip} disabled={Boolean(busyAction)}>填寫出貨資訊</button>}
+              {availableActions.has('ITEM_UNAVAILABLE') && <button type="button" className="ghost-button" onClick={() => setIsUnavailableDialogOpen(true)} disabled={Boolean(busyAction)}>回報缺貨</button>}
+              {availableActions.has('SHIP') && <button type="button" className="save-button" onClick={() => { setActionDialogError(''); setActionDialog('ship'); }} disabled={Boolean(busyAction)}>填寫出貨資訊</button>}
               {availableActions.has('DELIVER') && <button type="button" className="save-button" onClick={() => void runAction('DELIVER', () => deliverPurchaseOrder(orderId, token), '已標記交付。')} disabled={Boolean(busyAction)}>標記交付</button>}
               {availableActions.has('COMPLETE') && <button type="button" className="save-button" onClick={() => void runAction('COMPLETE', () => completePurchaseOrder(orderId, token), '訂單已完成。')} disabled={Boolean(busyAction)}>確認完成</button>}
-              {availableActions.has('REPORT_ABNORMAL') && <button type="button" className="ghost-button danger" onClick={handleReportAbnormal} disabled={Boolean(busyAction)}>提出異常</button>}
-              {availableActions.has('RESPOND_ABNORMAL') && <button type="button" className="save-button" onClick={handleRespondAbnormal} disabled={Boolean(busyAction)}>回應異常</button>}
-              {availableActions.has('CANCEL') && <button type="button" className="ghost-button danger" onClick={handleCancel} disabled={Boolean(busyAction)}>取消訂單</button>}
-              {counterpartId != null && <button type="button" className="ghost-button danger" onClick={() => void handleBlock()} disabled={Boolean(busyAction)}>封鎖交易對象</button>}
+              {availableActions.has('REPORT_ABNORMAL') && <button type="button" className="ghost-button danger" onClick={() => { setActionDialogError(''); setActionDialog('abnormal'); }} disabled={Boolean(busyAction)}>提出異常</button>}
+              {availableActions.has('RESPOND_ABNORMAL') && <button type="button" className="save-button" onClick={() => { setActionDialogError(''); setActionDialog('respond'); }} disabled={Boolean(busyAction)}>回應異常</button>}
+              {availableActions.has('CANCEL') && <button type="button" className="ghost-button danger" onClick={() => { setActionDialogError(''); setActionDialog('cancel'); }} disabled={Boolean(busyAction)}>取消訂單</button>}
+              {counterpartId != null && <button type="button" className="ghost-button danger" onClick={() => { setActionDialogError(''); setActionDialog('block'); }} disabled={Boolean(busyAction)}>封鎖交易對象</button>}
             </div>
           </>
         )}
@@ -277,6 +395,86 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
         {busyAction && <p className="muted-copy">處理中...</p>}
         {message && <p className="panel-note">{message}</p>}
         {error && <p className="inline-error">{error}</p>}
+
+        <ActionDialog
+          isOpen={actionDialog === 'cancel'}
+          eyebrow="託購訂單"
+          title="取消訂單"
+          description="取消後可能會影響信用分，請填寫取消原因。"
+          confirmLabel="確認取消"
+          confirmClassName="ghost-button danger"
+          isSubmitting={busyAction === 'CANCEL'}
+          onClose={closeActionDialog}
+          onConfirm={handleCancel}
+        >
+          <label className="form-field"><span>取消原因 *</span><textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows="3" autoFocus /></label>
+          {actionDialogError && <p className="inline-error">{actionDialogError}</p>}
+        </ActionDialog>
+
+        <ActionDialog isOpen={actionDialog === 'ship'} eyebrow="託購訂單" title="填寫出貨資訊" description="請提供收件人可查詢的物流資訊。" confirmLabel="送出出貨資訊" isSubmitting={busyAction === 'SHIP'} onClose={closeActionDialog} onConfirm={handleShip}>
+          <label className="form-field"><span>物流公司 *</span><input value={shippingForm.logisticsProvider} onChange={(event) => setShippingForm((current) => ({ ...current, logisticsProvider: event.target.value }))} autoFocus /></label>
+          <label className="form-field"><span>物流單號 *</span><input value={shippingForm.trackingNumber} onChange={(event) => setShippingForm((current) => ({ ...current, trackingNumber: event.target.value }))} /></label>
+          <label className="form-field"><span>物流查詢網址（可留空）</span><input type="url" value={shippingForm.trackingUrl} onChange={(event) => setShippingForm((current) => ({ ...current, trackingUrl: event.target.value }))} /></label>
+          {actionDialogError && <p className="inline-error">{actionDialogError}</p>}
+        </ActionDialog>
+
+        <ActionDialog isOpen={actionDialog === 'abnormal'} eyebrow="託購訂單" title="提出異常" description="請選擇異常類型並說明狀況，送出後會通知交易對方。" confirmLabel="送出回報" confirmClassName="ghost-button danger" isSubmitting={busyAction === 'REPORT_ABNORMAL'} onClose={closeActionDialog} onConfirm={handleReportAbnormal}>
+          <label className="form-field"><span>異常類型 *</span><select value={abnormalForm.abnormalType} onChange={(event) => setAbnormalForm((current) => ({ ...current, abnormalType: event.target.value }))}><option value="REQUESTER_NO_SHOW">委託人未出現</option><option value="RUNNER_NO_SHOW">接單人未出現</option><option value="RUNNER_NOT_DELIVERED">接單人未交付</option><option value="REQUESTER_UNREACHABLE">委託人聯繫不上</option><option value="ITEM_NOT_RECEIVED">未收到商品</option><option value="OTHER">其他</option></select></label>
+          <label className="form-field"><span>異常說明 *</span><textarea value={abnormalForm.description} onChange={(event) => setAbnormalForm((current) => ({ ...current, description: event.target.value }))} rows="4" autoFocus /></label>
+          {actionDialogError && <p className="inline-error">{actionDialogError}</p>}
+        </ActionDialog>
+
+        <ActionDialog isOpen={actionDialog === 'respond'} eyebrow="託購訂單" title="回應異常" description="請說明你的回應，送出後將交由系統依流程處理。" confirmLabel="送出回應" isSubmitting={busyAction === 'RESPOND_ABNORMAL'} onClose={closeActionDialog} onConfirm={handleRespondAbnormal}>
+          <label className="form-field"><span>回應內容 *</span><textarea value={abnormalResponse} onChange={(event) => setAbnormalResponse(event.target.value)} rows="4" autoFocus /></label>
+          {actionDialogError && <p className="inline-error">{actionDialogError}</p>}
+        </ActionDialog>
+
+        <ActionDialog isOpen={actionDialog === 'block'} eyebrow="安全設定" title="封鎖交易對象" description={`確定封鎖 ${counterpartName || '交易對象'}？封鎖後雙方不能成立新交易。`} confirmLabel="確認封鎖" confirmClassName="ghost-button danger" isSubmitting={busyAction === 'BLOCK'} onClose={closeActionDialog} onConfirm={handleBlock} />
+
+        {isUnavailableDialogOpen && (
+          <div className="purchase-order-dialog-backdrop" onClick={() => !busyAction && setIsUnavailableDialogOpen(false)}>
+            <form className="purchase-order-dialog" onSubmit={handleSubmitUnavailable} onClick={(event) => event.stopPropagation()}>
+              <div className="purchase-order-dialog-heading">
+                <div>
+                  <p className="eyebrow">託購訂單</p>
+                  <h3>回報商品缺貨</h3>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setIsUnavailableDialogOpen(false)}
+                  disabled={Boolean(busyAction)}
+                >
+                  關閉
+                </button>
+              </div>
+              <p>請提供缺貨原因，系統會通知委託人並記錄本次回報。</p>
+              <label className="form-field">
+                <span>缺貨原因 *</span>
+                <textarea
+                  value={unavailableReason}
+                  onChange={(event) => setUnavailableReason(event.target.value)}
+                  placeholder="例如：門市商品已售完，近期無補貨資訊"
+                  rows="4"
+                  autoFocus
+                />
+              </label>
+              <label className="form-field">
+                <span>門市名稱（選填）</span>
+                <input
+                  value={unavailableStoreName}
+                  onChange={(event) => setUnavailableStoreName(event.target.value)}
+                  placeholder="例如：中和店"
+                />
+              </label>
+              {unavailableError && <p className="inline-error">{unavailableError}</p>}
+              <div className="purchase-order-dialog-actions">
+                <button type="button" className="ghost-button" onClick={() => setIsUnavailableDialogOpen(false)} disabled={Boolean(busyAction)}>取消</button>
+                <button type="submit" className="save-button" disabled={Boolean(busyAction)}>{busyAction === 'ITEM_UNAVAILABLE' ? '送出中...' : '確認回報'}</button>
+              </div>
+            </form>
+          </div>
+        )}
 
         <section className="purchase-order-events">
           <h3>訂單紀錄</h3>
