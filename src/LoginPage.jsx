@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import gbcLogo from './assets/gbcLogo.png';
 import './LoginPage.css';
 import {
@@ -11,8 +11,11 @@ import {
 // 獨立登入頁，主要提供 popup 版 LINE OAuth 入口。
 function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const requestedReturnTo = new URLSearchParams(location.search).get('returnTo');
+  const returnTo = requestedReturnTo?.startsWith('/') && !requestedReturnTo.startsWith('//') ? requestedReturnTo : '/';
 
   useEffect(() => {
     // 接收 callback popup 回傳的登入成功訊息，成功後回首頁。
@@ -26,12 +29,12 @@ function LoginPage() {
       }
 
       setLoading(false);
-      navigate('/', { replace: true });
+      navigate(returnTo, { replace: true });
     };
 
     window.addEventListener('message', handleLineLoginMessage);
     return () => window.removeEventListener('message', handleLineLoginMessage);
-  }, [navigate]);
+  }, [navigate, returnTo]);
 
   // 開啟 LINE popup，授權流程與主頁登入 modal 共用同一套機制。
   const handleLineLogin = () => {

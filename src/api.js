@@ -346,6 +346,24 @@ export function fetchCampaigns(params) {
   return request('/api/v1/campaigns', { query: params });
 }
 
+// 分享頁使用的公開單筆查詢，不需要登入即可取得團購卡資料。
+export async function fetchPublicCampaign(campaignId) {
+  const response = await fetch(buildUrl(`/api/v1/public/campaigns/${encodeURIComponent(campaignId)}`), {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+  const data = await parseResponse(response);
+
+  if (!response.ok) {
+    const error = createApiError(data, '目前無法載入這筆團購。');
+    error.status = response.status;
+    throw error;
+  }
+
+  return data;
+}
+
 export function fetchMyHostedCampaigns(params, token) {
   return request('/api/v1/campaigns/my-hosted', {
     query: params,

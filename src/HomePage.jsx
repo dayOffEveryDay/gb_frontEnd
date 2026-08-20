@@ -1281,6 +1281,7 @@ function HomePage() {
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const [mobileSearchScope, setMobileSearchScope] = useState('CAMPAIGN');
+  const isChatFocusMode = isChatRoomsOpen || Boolean(chatCampaign) || Boolean(purchaseChatRoom);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -1315,6 +1316,13 @@ function HomePage() {
   const profileRestoreAppliedRef = useRef(false);
   const campaignsSignatureRef = useRef('[]');
   const chatRoomsRef = useRef(chatRooms);
+
+  useEffect(() => {
+    if (isChatFocusMode) {
+      setIsNavigationOpen(false);
+    }
+  }, [isChatFocusMode]);
+
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
   const chatUnreadRoomCount = useMemo(
     () =>
@@ -5258,10 +5266,10 @@ function HomePage() {
         </div>
       </main>
 
-      {!isSearchExpanded && activeType !== 'INQUIRY' && renderFloatingDealViewControl()}
-      {!isSearchExpanded && renderPageDots()}
+      {!isSearchExpanded && !isChatFocusMode && activeType !== 'INQUIRY' && renderFloatingDealViewControl()}
+      {!isSearchExpanded && !isChatFocusMode && renderPageDots()}
 
-      <div ref={navigationRef} className="mobile-navigation-fab">
+      {!isChatFocusMode && <div ref={navigationRef} className="mobile-navigation-fab">
         {isNavigationOpen && (
           <div className="mobile-navigation-menu" id="mobile-navigation-menu" role="menu">
             <button
@@ -5337,7 +5345,7 @@ function HomePage() {
             )}
           </button>
         </div>
-      </div>
+      </div>}
 
       <footer
         className={[

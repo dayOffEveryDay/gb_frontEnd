@@ -6,6 +6,7 @@ import UserProfilePage from './UserProfilePage';
 import GuidePage from './GuidePage';
 import OnboardingSetupPage from './OnboardingSetupPage';
 import OnboardingWelcomePage from './OnboardingWelcomePage';
+import ShareCampaignPage from './ShareCampaignPage';
 
 function App() {
   return (
@@ -18,6 +19,8 @@ function App() {
         <Route path="/onboarding/welcome" element={<OnboardingWelcomePage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/users/:id" element={<UserProfilePage />} />
+        <Route path="/campaigns/:campaignId" element={<ShareCampaignPage />} />
+        <Route path="/share/campaigns/:campaignId" element={<ShareCampaignPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
