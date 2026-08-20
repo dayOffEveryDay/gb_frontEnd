@@ -1659,6 +1659,7 @@ function PurchaseRequestsPanel({
   initialScope = 'MARKET',
   scopeOptions = [],
   scopeControl = 'dropdown',
+  pageHeader = null,
   onCreateOpenChange,
   onModalOpenChange,
   onRequireLogin,
@@ -2416,7 +2417,8 @@ function PurchaseRequestsPanel({
 
   return (
     <>
-      <section className="purchase-request-toolbar">
+      <section className={`purchase-request-toolbar${pageHeader ? ' purchase-request-page-header page-header-panel' : ''}`}>
+        {pageHeader}
         {useScopeTabs && (
           <div className="purchase-request-controls">
             <section className="category-strip purchase-request-scope-tabs" aria-label="委託範圍">

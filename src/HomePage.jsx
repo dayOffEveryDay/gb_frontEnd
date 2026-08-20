@@ -81,9 +81,12 @@ import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './Purc
 import { shareCampaign } from './shareUtils';
 import {
   AvatarIcon,
+  BulbIcon,
   CardViewIcon,
+  CartHandshakeIcon,
   CompactViewIcon,
   DiagonalExpandIcon,
+  MyDealsIcon,
   SearchIcon,
 } from './Icons';
 
@@ -831,8 +834,8 @@ function hasUsableCampaignId(campaign) {
   return getNormalizedCampaignId(campaign) != null;
 }
 
-function canDisplayMarketCampaign(campaign, activeType, hideFull = false) {
-  if (campaign?.scenarioType !== activeType) {
+function canDisplayMarketCampaign(campaign, campaignTypeFilter, hideFull = false) {
+  if (campaignTypeFilter !== 'ALL' && campaign?.scenarioType !== campaignTypeFilter) {
     return false;
   }
 
@@ -950,6 +953,10 @@ function buildOpenChatRooms(hostedData, joinedData) {
     .filter(hasUsableCampaignId)
     .filter(canListCampaignChatRoom)
     .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
+}
+
+function getNavigationTabValue(type) {
+  return type === 'INSTANT' || type === 'SCHEDULED' ? 'CAMPAIGN' : type;
 }
 
 function normalizePurchaseChatRoom(room) {
@@ -1078,7 +1085,11 @@ const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
 function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const swipeTabs = ['MINE', ...TYPE_OPTIONS.map((option) => option.value), 'REQUEST'];
+  const swipeTabs = ['MINE', 'CAMPAIGN', 'REQUEST', 'INQUIRY'];
+  const campaignTypeOptions = [
+    { value: 'ALL', label: '全部' },
+    ...TYPE_OPTIONS,
+  ];
   const localizedMyCampaignScopes = [
     { value: 'ALL', label: '全部' },
     { value: 'HOSTED', label: '我發起的' },
@@ -1129,7 +1140,8 @@ function HomePage() {
   const [categories, setCategories] = useState([]);
   const [referenceError, setReferenceError] = useState('');
   const [isReferenceLoading, setIsReferenceLoading] = useState(true);
-  const [activeType, setActiveType] = useState('INSTANT');
+  const [activeType, setActiveType] = useState('SCHEDULED');
+  const [activeCampaignType, setActiveCampaignType] = useState('ALL');
   const [activeCategory, setActiveCategory] = useState(0);
   const [hideFullCampaigns, setHideFullCampaigns] = useState(getInitialMarketHideFullEnabled);
   const [activeMarketStatus, setActiveMarketStatus] = useState('ALL');
@@ -1267,6 +1279,8 @@ function HomePage() {
   const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.matchMedia('(min-width: 700px)').matches);
   const [pageTransitionDirection, setPageTransitionDirection] = useState('forward');
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isNavigationOpen, setIsNavigationOpen] = useState(false);
+  const [mobileSearchScope, setMobileSearchScope] = useState('CAMPAIGN');
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -1286,6 +1300,9 @@ function HomePage() {
   const canPullRef = useRef(false);
   const gestureLockRef = useRef('');
   const searchInputRef = useRef(null);
+  const mobileSearchInputRef = useRef(null);
+  const navigationRef = useRef(null);
+  const searchReturnContextRef = useRef(null);
   const notificationClientRef = useRef(null);
   const purchaseChatRoomRef = useRef(null);
   const liveNotificationTimersRef = useRef(new Map());
@@ -1477,7 +1494,10 @@ function HomePage() {
 
       if (context?.ui) {
         if (context.ui.activeType) {
-          setActiveType(context.ui.activeType);
+          setActiveType(getNavigationTabValue(context.ui.activeType) === 'CAMPAIGN' ? 'SCHEDULED' : context.ui.activeType);
+        }
+        if (context.ui.activeCampaignType) {
+          setActiveCampaignType(context.ui.activeCampaignType);
         }
         if (typeof context.ui.activeCategory === 'number') {
           setActiveCategory(context.ui.activeCategory);
@@ -1886,7 +1906,7 @@ function HomePage() {
       setCampaignError('');
 
       try {
-        if (activeType === 'REQUEST') {
+        if (activeType === 'REQUEST' || activeType === 'INQUIRY') {
           setCampaigns([]);
           setPage(0);
           setHasMore(false);
@@ -1942,7 +1962,7 @@ function HomePage() {
         });
 
         const items = Array.isArray(data?.content)
-          ? data.content.map(mapCampaign).filter((item) => canDisplayMarketCampaign(item, activeType, hideFullCampaigns))
+          ? data.content.map(mapCampaign).filter((item) => canDisplayMarketCampaign(item, activeCampaignType, hideFullCampaigns))
           : [];
         const nextSignature = getCampaignListSignature(items);
 
@@ -1965,6 +1985,7 @@ function HomePage() {
     },
     [
       activeCategory,
+      activeCampaignType,
       activeMineDomain,
       activeMyCampaignFilter,
       activeMyCampaignScope,
@@ -2022,7 +2043,7 @@ function HomePage() {
 
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || activeType === 'MINE' || activeType === 'REQUEST' || !hasMore || isInitialLoading || isLoadingMore) {
+    if (!node || activeType === 'MINE' || activeType === 'REQUEST' || activeType === 'INQUIRY' || !hasMore || isInitialLoading || isLoadingMore) {
       return undefined;
     }
 
@@ -2044,7 +2065,7 @@ function HomePage() {
             const nextItems = Array.isArray(data?.content)
               ? data.content
                   .map((item, index) => mapCampaign(item, campaigns.length + index))
-                  .filter((item) => canDisplayMarketCampaign(item, activeType, hideFullCampaigns))
+                  .filter((item) => canDisplayMarketCampaign(item, activeCampaignType, hideFullCampaigns))
               : [];
 
             setCampaigns((current) => [...current, ...nextItems]);
@@ -2064,7 +2085,7 @@ function HomePage() {
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [activeCategory, activeType, campaigns.length, deferredSearch, fetchCampaignsForSelectedStores, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
+  }, [activeCampaignType, activeCategory, activeType, campaigns.length, deferredSearch, fetchCampaignsForSelectedStores, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
 
   const openProfile = () => {
     setAuthError('');
@@ -2630,8 +2651,7 @@ function HomePage() {
   };
 
   const handleOpenCreateCampaignForCurrentType = () => {
-    const currentScenarioType = activeType === 'INSTANT' || activeType === 'SCHEDULED' ? activeType : 'SCHEDULED';
-    switchActiveType(currentScenarioType);
+    const currentScenarioType = activeCampaignType === 'INSTANT' ? 'INSTANT' : 'SCHEDULED';
     handleOpenCreateCampaign(currentScenarioType);
   };
 
@@ -2648,14 +2668,19 @@ function HomePage() {
   const renderPageDots = () => (
     <div className="swipe-page-indicator" aria-label="頁面位置：可左右滑動切換">
       {swipeTabs.map((tab) => (
-        <span key={tab} className={tab === activeType ? 'active' : ''}></span>
+        <span key={tab} className={tab === getNavigationTabValue(activeType) ? 'active' : ''}></span>
       ))}
     </div>
   );
 
   const switchActiveType = (nextType) => {
+    setIsNavigationOpen(false);
     setActiveType((current) => {
-      const resolvedType = typeof nextType === 'function' ? nextType(current) : nextType;
+      const requestedType = typeof nextType === 'function' ? nextType(getNavigationTabValue(current)) : nextType;
+      if (requestedType === 'INSTANT' || requestedType === 'SCHEDULED') {
+        setActiveCampaignType(requestedType);
+      }
+      const resolvedType = getNavigationTabValue(requestedType) === 'CAMPAIGN' ? 'SCHEDULED' : requestedType;
       if (!resolvedType || resolvedType === current) {
         return current;
       }
@@ -2664,23 +2689,48 @@ function HomePage() {
         setIsProxyRequestFormOpen(false);
       }
 
-      const currentIndex = swipeTabs.findIndex((value) => value === current);
-      const nextIndex = swipeTabs.findIndex((value) => value === resolvedType);
+      const currentIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(current));
+      const nextIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(resolvedType));
       setPageTransitionDirection(nextIndex >= currentIndex ? 'forward' : 'backward');
       return resolvedType;
     });
   };
 
   useEffect(() => {
+    if (!isNavigationOpen) {
+      return undefined;
+    }
+
+    const handleNavigationDismiss = (event) => {
+      if (event.key === 'Escape') {
+        setIsNavigationOpen(false);
+        return;
+      }
+
+      if (event.type === 'pointerdown' && !navigationRef.current?.contains(event.target)) {
+        setIsNavigationOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handleNavigationDismiss);
+    document.addEventListener('keydown', handleNavigationDismiss);
+
+    return () => {
+      document.removeEventListener('pointerdown', handleNavigationDismiss);
+      document.removeEventListener('keydown', handleNavigationDismiss);
+    };
+  }, [isNavigationOpen]);
+
+  useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') {
       return undefined;
     }
 
-    if (activeType === 'MINE' || activeType === 'REQUEST') {
+    if (activeType === 'MINE' || activeType === 'REQUEST' || activeType === 'INQUIRY') {
       return undefined;
     }
 
-    const refreshIntervalMs = activeType === 'SCHEDULED' ? 60000 : 15000;
+    const refreshIntervalMs = activeCampaignType === 'SCHEDULED' ? 60000 : 15000;
 
     const refreshIfVisible = () => {
       if (document.visibilityState !== 'visible') {
@@ -2708,7 +2758,7 @@ function HomePage() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [activeType, loadCampaignPage]);
+  }, [activeCampaignType, activeType, loadCampaignPage]);
 
   const switchActiveTypeBySwipe = (direction) => {
     if (window.innerWidth >= 700) {
@@ -2716,7 +2766,7 @@ function HomePage() {
     }
 
     switchActiveType((current) => {
-      const currentIndex = swipeTabs.findIndex((value) => value === current);
+      const currentIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(current));
       if (currentIndex === -1) {
         return current;
       }
@@ -3033,7 +3083,7 @@ function HomePage() {
 
         return activeType === 'MINE'
           ? nextCampaigns
-          : nextCampaigns.filter((campaign) => canDisplayMarketCampaign(campaign, activeType, hideFullCampaigns));
+          : nextCampaigns.filter((campaign) => canDisplayMarketCampaign(campaign, activeCampaignType, hideFullCampaigns));
       });
       setSelectedDealToJoin(null);
       setPurchaseQuantity('1');
@@ -3229,6 +3279,7 @@ function HomePage() {
         scrollY: window.scrollY,
         ui: {
           activeType,
+          activeCampaignType,
           activeCategory,
           hideFullCampaigns,
           activeStoreIds,
@@ -4253,6 +4304,60 @@ function HomePage() {
     setExpandedCompactDealId('');
   };
 
+  const focusMobileSearch = () => {
+    window.setTimeout(() => mobileSearchInputRef.current?.focus(), 0);
+  };
+
+  const handleOpenMobileSearch = () => {
+    const isRequestScope = activeType === 'REQUEST';
+    searchReturnContextRef.current = {
+      activeType,
+      activeCampaignType,
+      scrollY: window.scrollY,
+    };
+    setMobileSearchScope(isRequestScope ? 'REQUEST' : 'CAMPAIGN');
+    if (!isRequestScope) {
+      setActiveCampaignType('ALL');
+      switchActiveType('CAMPAIGN');
+    }
+    setIsNavigationOpen(false);
+    setIsSearchExpanded(true);
+    window.scrollTo({ top: 0 });
+    focusMobileSearch();
+  };
+
+  const handleChangeMobileSearchScope = (nextScope) => {
+    setMobileSearchScope(nextScope);
+
+    if (nextScope === 'REQUEST') {
+      switchActiveType('REQUEST');
+    } else {
+      setActiveCampaignType('ALL');
+      switchActiveType('CAMPAIGN');
+    }
+
+    focusMobileSearch();
+  };
+
+  const handleCloseMobileSearch = () => {
+    const returnContext = searchReturnContextRef.current;
+    setIsSearchExpanded(false);
+    setIsNavigationOpen(false);
+    setSearch('');
+
+    if (returnContext?.activeType) {
+      setActiveType(returnContext.activeType);
+      if (returnContext.activeCampaignType) {
+        setActiveCampaignType(returnContext.activeCampaignType);
+      }
+    }
+
+    window.setTimeout(() => {
+      window.scrollTo({ top: returnContext?.scrollY ?? 0 });
+      searchReturnContextRef.current = null;
+    }, 0);
+  };
+
   const renderFloatingDealViewControl = () => (
     <div
       className={isDealViewControlVisible ? 'floating-view-control' : 'floating-view-control hidden'}
@@ -4283,7 +4388,14 @@ function HomePage() {
 
   return (
     <div
-      className={`app-shell${isProxyRequestFormOpen || isProxyRequestModalOpen ? ' proxy-request-modal-open' : ''}`}
+      className={[
+        'app-shell',
+        isProxyRequestFormOpen || isProxyRequestModalOpen ? 'proxy-request-modal-open' : '',
+        isSearchExpanded ? 'mobile-search-mode' : '',
+        isSearchExpanded && !search.trim() ? 'search-empty' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -4535,30 +4647,123 @@ function HomePage() {
         onSubmitted={handleReviewSubmitted}
       />
 
+      {isSearchExpanded && (
+        <section className="mobile-search-header" aria-label="搜尋合購與託購">
+          <div className="mobile-search-bar">
+            <button
+              type="button"
+              className="mobile-search-back"
+              aria-label="返回原本頁面"
+              onClick={handleCloseMobileSearch}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" />
+              </svg>
+            </button>
+            <div className="mobile-search-field">
+              <SearchIcon />
+              <input
+                ref={mobileSearchInputRef}
+                type="search"
+                aria-label="搜尋商品名稱、關鍵字或類別"
+                placeholder="搜尋商品名稱、關鍵字或類別"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="mobile-search-clear"
+                  aria-label="清除搜尋文字"
+                  onClick={() => {
+                    setSearch('');
+                    focusMobileSearch();
+                  }}
+                >
+                  <span aria-hidden="true"></span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mobile-search-scopes" role="tablist" aria-label="搜尋範圍">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileSearchScope === 'CAMPAIGN'}
+              className={mobileSearchScope === 'CAMPAIGN' ? 'active' : ''}
+              onClick={() => handleChangeMobileSearchScope('CAMPAIGN')}
+            >
+              合購
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileSearchScope === 'REQUEST'}
+              className={mobileSearchScope === 'REQUEST' ? 'active' : ''}
+              onClick={() => handleChangeMobileSearchScope('REQUEST')}
+            >
+              託購
+            </button>
+          </div>
+
+          {!search.trim() && (
+            <div className="mobile-search-start">
+              <SearchIcon />
+              <strong>開始搜尋</strong>
+              <p>輸入商品名稱、關鍵字或類別，尋找合購與託購內容。</p>
+            </div>
+          )}
+        </section>
+      )}
+
       <main className="content">
         <div key={activeType} className={`page-transition page-transition-${pageTransitionDirection}`}>
         {activeType === 'REQUEST' ? (
-          <>
-            <PurchaseRequestsPanel
-              token={token}
-              user={user}
-              keyword={deferredSearch}
-              viewMode={dealViewMode}
-              isCreateOpen={isProxyRequestFormOpen}
-              onCreateOpenChange={setIsProxyRequestFormOpen}
-              onModalOpenChange={setIsProxyRequestModalOpen}
-              onRequireLogin={() => setIsLoginModalOpen(true)}
-              onShowToast={({ title, message }) => showSuccessToast(title, message)}
-              onOpenPurchaseChat={handleOpenPurchaseChat}
-            />
-          </>
-        ) : activeType === 'REQUEST_DISABLED' ? (
-          <section className="request-page-header">
-            <p className="eyebrow">發起託購</p>
-            <h2>建立託購需求</h2>
+          <PurchaseRequestsPanel
+            token={token}
+            user={user}
+            keyword={deferredSearch}
+            viewMode={dealViewMode}
+            isCreateOpen={isProxyRequestFormOpen}
+            pageHeader={(
+              <div className="page-identity-heading compact has-action">
+                <div className="page-identity-copy">
+                  <h1>託購</h1>
+                  <p className="eyebrow">代買需求</p>
+                </div>
+                <button
+                  type="button"
+                  className="page-primary-action"
+                  onClick={() => setIsProxyRequestFormOpen(true)}
+                >
+                  <span aria-hidden="true">＋</span>
+                  委託
+                </button>
+              </div>
+            )}
+            onCreateOpenChange={setIsProxyRequestFormOpen}
+            onModalOpenChange={setIsProxyRequestModalOpen}
+            onRequireLogin={() => setIsLoginModalOpen(true)}
+            onShowToast={({ title, message }) => showSuccessToast(title, message)}
+            onOpenPurchaseChat={handleOpenPurchaseChat}
+          />
+        ) : activeType === 'INQUIRY' ? (
+          <section className="inquiry-placeholder" aria-labelledby="inquiry-page-title">
+            <div className="inquiry-placeholder-icon"><BulbIcon /></div>
+            <div className="inquiry-title-row">
+              <h1 id="inquiry-page-title">詢問區</h1>
+              <p className="eyebrow">門市即時情報</p>
+            </div>
+            <p>想知道特定門市是否還有某項商品？詢問與回答功能正在開發中。</p>
+            <span>預計支援門市提問、社群回答，以及最長 7 天的有效期限。</span>
           </section>
         ) : activeType === 'MINE' ? (
-          <section className="mine-page-header">
+          <section className="mine-page-header page-header-panel">
+            <div className="page-identity-heading compact">
+              <h1>我的</h1>
+              <p className="eyebrow">個人內容</p>
+            </div>
             <div className="mine-domain-switch" role="tablist" aria-label="我的分類">
               {localizedMineDomains.map((option) => (
                 <button
@@ -4573,55 +4778,42 @@ function HomePage() {
                 </button>
               ))}
             </div>
-            <div className="type-switch-shell desktop-mine-type-switch">
-              <section className="type-switch">
-                <button type="button" className="mode-button active desktop-only-mode" onClick={() => switchActiveType('MINE')}>
-                  我的
-                </button>
-                {TYPE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={activeType === option.value ? 'mode-button active' : 'mode-button'}
-                    onClick={() => switchActiveType(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </section>
-            </div>
           </section>
         ) : (
-          <div className="type-switch-shell">
-            <section className="type-switch">
+          <section className="campaign-page-header page-header-panel">
+            <div className="page-identity-heading compact has-action">
+              <div className="page-identity-copy">
+                <h1>合購</h1>
+                <p className="eyebrow">一起購買</p>
+              </div>
               <button
                 type="button"
-                className="mode-button desktop-only-mode"
-                onClick={() => switchActiveType('MINE')}
+                className="page-primary-action"
+                onClick={handleOpenCreateCampaignForCurrentType}
               >
-                我的
+                <span aria-hidden="true">＋</span>
+                開團
               </button>
-              {TYPE_OPTIONS.map((option) => (
+            </div>
+            <div className="campaign-type-filter" role="tablist" aria-label="合購類型">
+              {campaignTypeOptions.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  className={activeType === option.value ? 'mode-button active' : 'mode-button'}
-                  onClick={() => switchActiveType(option.value)}
+                  role="tab"
+                  aria-selected={activeCampaignType === option.value}
+                  className={activeCampaignType === option.value ? 'active' : ''}
+                  onClick={() => setActiveCampaignType(option.value)}
                 >
                   {option.label}
                 </button>
               ))}
-            </section>
-          </div>
+            </div>
+          </section>
         )}
 
-        {activeType === 'REQUEST' ? null : activeType === 'REQUEST_DISABLED' ? (
+        {activeType === 'REQUEST' || activeType === 'INQUIRY' ? null : activeType === 'REQUEST_DISABLED' ? (
           <>
-            <section className="request-coming-soon">
-              <h3>託購頁面準備中</h3>
-              <p>點右下角「發起委託」後，會以彈窗開啟託購建單表單。</p>
-            </section>
-
             {isProxyRequestFormOpen && (
               <div className="modal-backdrop" onClick={() => setIsProxyRequestFormOpen(false)}>
                 <div className="login-modal create-campaign-modal proxy-request-modal" onClick={(event) => event.stopPropagation()}>
@@ -4969,7 +5161,7 @@ function HomePage() {
             onShowToast={({ title, message }) => showSuccessToast(title, message)}
             onOpenPurchaseChat={handleOpenPurchaseChat}
           />
-        ) : activeType !== 'REQUEST' && (
+        ) : activeType !== 'REQUEST' && activeType !== 'INQUIRY' && (
           <>
             <section
               className={[
@@ -5066,12 +5258,91 @@ function HomePage() {
         </div>
       </main>
 
-      {!isSearchExpanded && renderFloatingDealViewControl()}
+      {!isSearchExpanded && activeType !== 'INQUIRY' && renderFloatingDealViewControl()}
       {!isSearchExpanded && renderPageDots()}
+
+      <div ref={navigationRef} className="mobile-navigation-fab">
+        {isNavigationOpen && (
+          <div className="mobile-navigation-menu" id="mobile-navigation-menu" role="menu">
+            <button
+              type="button"
+              className={`mobile-navigation-item ${activeType === 'MINE' ? 'active' : ''}`}
+              role="menuitem"
+              aria-current={activeType === 'MINE' ? 'page' : undefined}
+              onClick={() => switchActiveType('MINE')}
+            >
+              <span className="mobile-navigation-item-icon"><MyDealsIcon /></span>
+              <span>我的</span>
+            </button>
+            <button
+              type="button"
+              className={`mobile-navigation-item ${activeType === 'INSTANT' || activeType === 'SCHEDULED' ? 'active' : ''}`}
+              role="menuitem"
+              aria-current={activeType === 'INSTANT' || activeType === 'SCHEDULED' ? 'page' : undefined}
+              onClick={() => switchActiveType('CAMPAIGN')}
+            >
+              <span className="mobile-navigation-item-icon"><CartHandshakeIcon /></span>
+              <span>合購</span>
+            </button>
+            <button
+              type="button"
+              className={`mobile-navigation-item ${activeType === 'REQUEST' ? 'active' : ''}`}
+              role="menuitem"
+              aria-current={activeType === 'REQUEST' ? 'page' : undefined}
+              onClick={() => switchActiveType('REQUEST')}
+            >
+              <span className="mobile-navigation-item-icon"><CartHandshakeIcon /></span>
+              <span>託購</span>
+            </button>
+            <button
+              type="button"
+              className={`mobile-navigation-item ${activeType === 'INQUIRY' ? 'active' : ''}`}
+              role="menuitem"
+              aria-current={activeType === 'INQUIRY' ? 'page' : undefined}
+              onClick={() => switchActiveType('INQUIRY')}
+            >
+              <span className="mobile-navigation-item-icon"><BulbIcon /></span>
+              <span>詢問</span>
+            </button>
+            <button
+              type="button"
+              className="mobile-navigation-item"
+              role="menuitem"
+              onClick={handleOpenMobileSearch}
+            >
+              <span className="mobile-navigation-item-icon"><SearchIcon /></span>
+              <span>搜尋</span>
+            </button>
+          </div>
+        )}
+
+        <div className="mobile-navigation-controls">
+          <button
+            type="button"
+            className={`mobile-navigation-trigger ${isNavigationOpen ? 'open' : ''}`}
+            aria-label={isNavigationOpen ? '收合導覽選單' : '展開導覽選單'}
+            aria-expanded={isNavigationOpen}
+            aria-controls="mobile-navigation-menu"
+            onClick={() => {
+              setIsSearchExpanded(false);
+              setIsNavigationOpen((current) => !current);
+            }}
+          >
+            {isNavigationOpen ? (
+              <span className="mobile-navigation-close-icon" aria-hidden="true"></span>
+            ) : (
+              <span className="mobile-navigation-grid-icon" aria-hidden="true">
+                <i></i><i></i><i></i><i></i>
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
 
       <footer
         className={[
           'bottom-bar',
+          'desktop-bottom-bar',
           isSearchExpanded ? 'search-expanded' : '',
           activeType === 'REQUEST' ? 'request-mode' : '',
         ]
@@ -5110,12 +5381,21 @@ function HomePage() {
             }}
           />
         </label>
+        <button
+          type="button"
+          className={activeType === 'INQUIRY' ? 'create-button bottom-nav-button active' : 'create-button bottom-nav-button'}
+          onClick={() => switchActiveType('INQUIRY')}
+          aria-label="詢問區"
+          title="詢問區"
+        >
+          詢問
+        </button>
         {activeType === 'MINE' ? (
           <>
             <button
               type="button"
               className="create-button bottom-nav-button"
-              onClick={() => switchActiveType('SCHEDULED')}
+              onClick={() => switchActiveType('CAMPAIGN')}
               aria-label="合購"
               title="合購"
             >
@@ -5136,7 +5416,7 @@ function HomePage() {
             <button
               type="button"
               className="create-button bottom-nav-button"
-              onClick={() => switchActiveType('SCHEDULED')}
+              onClick={() => switchActiveType('CAMPAIGN')}
               aria-label="合購"
               title="合購"
             >
@@ -5150,6 +5430,23 @@ function HomePage() {
               title="發起委託"
             >
               發起委託
+            </button>
+          </>
+        ) : activeType === 'INQUIRY' ? (
+          <>
+            <button
+              type="button"
+              className="create-button bottom-nav-button"
+              onClick={() => switchActiveType('CAMPAIGN')}
+            >
+              合購
+            </button>
+            <button
+              type="button"
+              className="create-button bottom-nav-button request-button"
+              onClick={() => switchActiveType('REQUEST')}
+            >
+              託購
             </button>
           </>
         ) : (
