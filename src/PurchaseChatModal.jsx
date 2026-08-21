@@ -278,7 +278,7 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop chat-modal-backdrop" onClick={onClose}>
       <div className="login-modal campaign-chat-modal purchase-chat-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-top-row">
           <div>

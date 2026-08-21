@@ -698,7 +698,7 @@ function CampaignChatModal({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop chat-modal-backdrop" onClick={onClose}>
       <div className="chat-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-top-row">
           <p className="eyebrow">團購聊天室</p>

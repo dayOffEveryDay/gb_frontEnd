@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import gbcLogo from './assets/gbcLogo.png';
+import { isDevLoginEnabled } from './api';
 
 function LoginModal({ labels, isOpen, authLoading, authError, onClose, onLineLogin, onDevLogin }) {
   const [isDevMode, setIsDevMode] = useState(false);
@@ -27,15 +28,17 @@ function LoginModal({ labels, isOpen, authLoading, authError, onClose, onLineLog
           <button type="button" className="line-login-button" onClick={onLineLogin} disabled={authLoading}>
             {labels.loginWithLine}
           </button>
-          <button
-            type="button"
-            className="text-button dev-login-toggle"
-            onClick={() => setIsDevMode((current) => !current)}
-            disabled={authLoading}
-          >
-            開發者登入模式
-          </button>
-          {isDevMode && (
+          {isDevLoginEnabled && (
+            <button
+              type="button"
+              className="text-button dev-login-toggle"
+              onClick={() => setIsDevMode((current) => !current)}
+              disabled={authLoading}
+            >
+              開發者登入模式
+            </button>
+          )}
+          {isDevLoginEnabled && isDevMode && (
             <form className="dev-login-panel" onSubmit={handleSubmitDevLogin}>
               <label className="profile-field">
                 <span>userId</span>

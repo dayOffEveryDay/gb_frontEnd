@@ -7216,6 +7216,31 @@
 }
 
 @media (max-width: 699px) {
+  /* iOS Safari／內建瀏覽器會隨網址列與底部工具列改變可視高度。
+     聊天室採用動態視窗高度，確保輸入列始終留在可操作區域。 */
+  .chat-modal-backdrop {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding:
+      calc(10px + env(safe-area-inset-top, 0px))
+      max(10px, env(safe-area-inset-right, 0px))
+      calc(10px + env(safe-area-inset-bottom, 0px))
+      max(10px, env(safe-area-inset-left, 0px));
+    overflow: hidden;
+  }
+
+  .chat-modal,
+  .purchase-chat-modal {
+    max-height: min(880px, calc(100vh - 20px));
+    max-height: min(880px, calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
+    height: min(880px, calc(100vh - 20px));
+    height: min(880px, calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
+  }
+
+  .chat-modal .chat-message-list {
+    min-height: 0;
+  }
+
   .app-shell {
     padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px));
   }
@@ -7354,9 +7379,33 @@
   margin: 0;
 }
 
+.share-campaign-heading .eyebrow {
+  color: #386cc4;
+  font-weight: 800;
+}
+
 .share-campaign-heading h1 {
   margin-top: 5px;
+  color: #17233a;
   font-size: clamp(22px, 5vw, 30px);
+}
+
+:root[data-theme='dark'] .share-campaign-heading .eyebrow {
+  color: #aac7ff;
+}
+
+:root[data-theme='dark'] .share-campaign-heading h1 {
+  color: #f5f8ff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .share-campaign-heading .eyebrow {
+    color: #aac7ff;
+  }
+
+  :root:not([data-theme]) .share-campaign-heading h1 {
+    color: #f5f8ff;
+  }
 }
 
 .share-campaign-state {

@@ -18,12 +18,8 @@ function getLineCallbackUrl() {
   return `${getFrontendBaseUrl()}/login/callback`;
 }
 
-// localhost 使用指定的 LINE Channel ID，其他環境改由 env 提供。
+// LINE Channel ID 由 Vite mode 對應的環境檔提供，讓打包時明確區分開發與正式環境。
 function getLineClientId() {
-  if (isLocalhost()) {
-    return '2009301316';
-  }
-
   return import.meta.env.VITE_LINE_CLIENT_ID ?? '';
 }
 
@@ -41,6 +37,7 @@ function getBackendBaseUrl() {
 const BACKEND_API_BASE_URL = getBackendBaseUrl();
 const LINE_CALLBACK_URL = getLineCallbackUrl();
 const LINE_CLIENT_ID = getLineClientId();
+export const isDevLoginEnabled = import.meta.env.VITE_ENABLE_DEV_LOGIN === 'true';
 
 const TOKEN_KEY = 'jwt_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
@@ -846,6 +843,10 @@ export function lineLogin(payload) {
 }
 
 export function devLogin(userId) {
+  if (!isDevLoginEnabled) {
+    throw new Error('開發者登入在此環境未啟用。');
+  }
+
   return request('/api/v1/auth/dev-login', {
     query: {
       userId,

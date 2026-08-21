@@ -26,6 +26,7 @@ import {
   fetchUnreadNotifications,
   getFrontendBaseUrl,
   getBackendBaseUrl,
+  isDevLoginEnabled,
   getStoredToken,
   getStoredUser,
   hostReviseCampaign,
@@ -2126,6 +2127,11 @@ function HomePage() {
   };
 
   const handleDevLogin = async (userId) => {
+    if (!isDevLoginEnabled) {
+      setAuthError('開發者登入在此環境未啟用。');
+      return;
+    }
+
     const normalizedUserId = userId.trim();
     if (!normalizedUserId) {
       setAuthError('請輸入開發者登入 userId');
