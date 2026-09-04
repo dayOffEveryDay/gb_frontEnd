@@ -8,7 +8,6 @@ function OnboardingSetupPage() {
   const token = getStoredToken();
   const user = useMemo(() => getStoredUser(), []);
   const [displayName, setDisplayName] = useState(user?.displayName ?? '');
-  const [hasCostcoMembership, setHasCostcoMembership] = useState(Boolean(user?.hasCostcoMembership));
   const [themePreference, setThemePreference] = useState(getInitialThemePreference);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -31,7 +30,6 @@ function OnboardingSetupPage() {
       const nextUser = await updateCurrentUserProfile(
         {
           displayName: trimmedName,
-          hasCostcoMembership,
         },
         token
       );
@@ -41,7 +39,6 @@ function OnboardingSetupPage() {
           ...user,
           ...nextUser,
           displayName: nextUser?.displayName ?? trimmedName,
-          hasCostcoMembership: Boolean(nextUser?.hasCostcoMembership ?? hasCostcoMembership),
         },
       });
       applyThemePreference(themePreference);
@@ -98,15 +95,6 @@ function OnboardingSetupPage() {
             <span>暗色</span>
           </label>
         </fieldset>
-
-        <label className="switch-row onboarding-switch-row">
-          <span>我有 Costco 會員</span>
-          <input
-            type="checkbox"
-            checked={hasCostcoMembership}
-            onChange={(event) => setHasCostcoMembership(event.target.checked)}
-          />
-        </label>
 
         {error && <p className="inline-error">{error}</p>}
 

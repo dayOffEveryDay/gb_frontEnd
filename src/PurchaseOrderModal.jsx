@@ -9,7 +9,9 @@ import {
   deliverPurchaseOrder,
   fetchPurchaseOrder,
   fetchPurchaseOrderEvents,
+  fetchPurchaseRequest,
   markPurchaseOrderItemUnavailable,
+  reopenPurchaseRequest,
   reportPurchaseOrderAbnormal,
   respondPurchaseOrderAbnormal,
   shipPurchaseOrder,
@@ -89,6 +91,7 @@ function getAvailableActions(order, isRequester, isRunner) {
 
 function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, onUpdated, onClose }) {
   const [order, setOrder] = useState(null);
+  const [purchaseRequest, setPurchaseRequest] = useState(null);
   const [events, setEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [busyAction, setBusyAction] = useState('');
@@ -116,12 +119,22 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
       ]);
       setOrder(detail);
       setEvents(Array.isArray(eventData) ? eventData : []);
+      if (
+        detail?.purchaseRequestId != null &&
+        String(detail?.requesterId) === String(currentUser?.id) &&
+        String(detail?.status).toUpperCase() === 'UNAVAILABLE_CANCELLED'
+      ) {
+        const requestDetail = await fetchPurchaseRequest(detail.purchaseRequestId, token);
+        setPurchaseRequest(requestDetail);
+      } else {
+        setPurchaseRequest(null);
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '訂單載入失敗');
     } finally {
       setIsLoading(false);
     }
-  }, [isOpen, orderId, token]);
+  }, [currentUser?.id, isOpen, orderId, token]);
 
   useEffect(() => {
     if (isOpen) {
@@ -135,6 +148,7 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
       void loadOrder();
     } else {
       setOrder(null);
+      setPurchaseRequest(null);
       setEvents([]);
       setError('');
       setIsUnavailableDialogOpen(false);
@@ -148,6 +162,10 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
   const counterpartId = isRequester ? order?.runnerId : order?.requesterId;
   const counterpartName = isRequester ? order?.runnerDisplayName : order?.requesterDisplayName;
   const deliveryMethod = (order?.deliveryMethod ?? '').toString().toUpperCase();
+  const canReopenRequest =
+    isRequester &&
+    String(order?.status).toUpperCase() === 'UNAVAILABLE_CANCELLED' &&
+    String(purchaseRequest?.status).toUpperCase() === 'AWAITING_REOPEN';
 
   if (!isOpen) return null;
 
@@ -176,6 +194,24 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
       () => (isRequester ? confirmPurchaseOrderAsRequester(orderId, token) : confirmPurchaseOrderAsRunner(orderId, token)),
       '已完成交易確認。'
     );
+
+  const handleReopenRequest = async () => {
+    if (order?.purchaseRequestId == null) return;
+    setBusyAction('REOPEN_REQUEST');
+    setError('');
+    setMessage('');
+    try {
+      const updatedRequest = await reopenPurchaseRequest(order.purchaseRequestId, token);
+      setPurchaseRequest(updatedRequest);
+      setMessage('委託已重新開放，新的募集期限至少保留 24 小時。');
+      setActionDialog('');
+      onUpdated?.(updatedRequest);
+    } catch (nextError) {
+      setActionDialogError(nextError instanceof Error ? nextError.message : '重新開放委託失敗');
+    } finally {
+      setBusyAction('');
+    }
+  };
 
   const LEGACY_HANDLE_CANCEL = () => {
     const reason = UNUSED_PROMPT_REQUIRED();
@@ -384,6 +420,7 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
               {availableActions.has('SHIP') && <button type="button" className="save-button" onClick={() => { setActionDialogError(''); setActionDialog('ship'); }} disabled={Boolean(busyAction)}>填寫出貨資訊</button>}
               {availableActions.has('DELIVER') && <button type="button" className="save-button" onClick={() => void runAction('DELIVER', () => deliverPurchaseOrder(orderId, token), '已標記交付。')} disabled={Boolean(busyAction)}>標記交付</button>}
               {availableActions.has('COMPLETE') && <button type="button" className="save-button" onClick={() => void runAction('COMPLETE', () => completePurchaseOrder(orderId, token), '訂單已完成。')} disabled={Boolean(busyAction)}>確認完成</button>}
+              {canReopenRequest && <button type="button" className="save-button" onClick={() => { setActionDialogError(''); setActionDialog('reopen'); }} disabled={Boolean(busyAction)}>重新開啟委託</button>}
               {availableActions.has('REPORT_ABNORMAL') && <button type="button" className="ghost-button danger" onClick={() => { setActionDialogError(''); setActionDialog('abnormal'); }} disabled={Boolean(busyAction)}>提出異常</button>}
               {availableActions.has('RESPOND_ABNORMAL') && <button type="button" className="save-button" onClick={() => { setActionDialogError(''); setActionDialog('respond'); }} disabled={Boolean(busyAction)}>回應異常</button>}
               {availableActions.has('CANCEL') && <button type="button" className="ghost-button danger" onClick={() => { setActionDialogError(''); setActionDialog('cancel'); }} disabled={Boolean(busyAction)}>取消訂單</button>}
@@ -395,6 +432,20 @@ function PurchaseOrderModal({ isOpen, orderId, token, currentUser, onOpenChat, o
         {busyAction && <p className="muted-copy">處理中...</p>}
         {message && <p className="panel-note">{message}</p>}
         {error && <p className="inline-error">{error}</p>}
+
+        <ActionDialog
+          isOpen={actionDialog === 'reopen'}
+          eyebrow="缺貨委託"
+          title="重新開啟委託"
+          description="原訂單會保留為缺貨取消，這筆委託將重新公開，讓其他接單人承接。"
+          confirmLabel="確認重新開啟"
+          isSubmitting={busyAction === 'REOPEN_REQUEST'}
+          onClose={closeActionDialog}
+          onConfirm={handleReopenRequest}
+        >
+          <p className="panel-note">若原期限不足，系統會自動延長，確保至少有 24 小時募集時間。</p>
+          {actionDialogError && <p className="inline-error">{actionDialogError}</p>}
+        </ActionDialog>
 
         <ActionDialog
           isOpen={actionDialog === 'cancel'}

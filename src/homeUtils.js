@@ -196,7 +196,6 @@ export function normalizeUser(user) {
     id: user.id ?? null,
     displayName: user.displayName ?? LABELS.noValue,
     profileImageUrl: user.profileImageUrl ?? user.profile_image_url ?? '',
-    hasCostcoMembership: Boolean(user.hasCostcoMembership ?? user.has_costco_membership),
   };
 }
 

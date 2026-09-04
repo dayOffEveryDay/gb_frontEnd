@@ -21,6 +21,7 @@
   --line: rgba(77, 109, 163, 0.2);
   --line-soft: rgba(77, 109, 163, 0.12);
   --primary: #3177f0;
+  --primary-contrast: #ffffff;
   --accent: #c86b72;
   --accent-soft: #ffe4e6;
   --tomato: #c86b72;
@@ -42,6 +43,7 @@
     --line: rgba(125, 159, 221, 0.22);
     --line-soft: rgba(125, 159, 221, 0.12);
     --primary: #5a96ff;
+    --primary-contrast: #09111f;
     --accent: #c77b80;
     --accent-soft: #472f38;
     --tomato: #c77b80;
@@ -63,6 +65,7 @@
   --line: rgba(77, 109, 163, 0.2);
   --line-soft: rgba(77, 109, 163, 0.12);
   --primary: #3177f0;
+  --primary-contrast: #ffffff;
   --accent: #c86b72;
   --accent-soft: #ffe4e6;
   --tomato: #c86b72;
@@ -83,6 +86,7 @@
   --line: rgba(125, 159, 221, 0.22);
   --line-soft: rgba(125, 159, 221, 0.12);
   --primary: #5a96ff;
+  --primary-contrast: #09111f;
   --accent: #c77b80;
   --accent-soft: #472f38;
   --tomato: #c77b80;

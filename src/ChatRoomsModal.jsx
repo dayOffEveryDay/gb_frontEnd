@@ -68,7 +68,7 @@ function getRoomView(room) {
     unreadCount: Number(room.unreadMessageCount ?? 0),
     time: getCampaignRoomTime(room),
     preview: '',
-    readOnly: false,
+    readOnly: (room?.chatAccess ?? room?.chat_access ?? '').toString().toUpperCase() === 'READ_ONLY',
   };
 }
 
@@ -87,7 +87,7 @@ function ChatRoomsModal({ labels, isOpen, chatRooms, isLoading, error, onClose, 
           </button>
         </div>
 
-        <p className="chat-room-intro">團購與託購成立後的聊天室會集中顯示在這裡。</p>
+        <p className="chat-room-intro">你建立或參與的團購與託購聊天室會集中顯示在這裡。</p>
 
         <div className="chat-room-list">
           {isLoading && <p className="muted-copy">載入聊天室中...</p>}

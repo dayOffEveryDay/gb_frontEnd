@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { BulbIcon } from './Icons';
+import PurchaseDeliveryProfilesModal from './PurchaseDeliveryProfilesModal';
 
 function ProfileModal({
   labels,
+  token,
   user,
   profileDraft,
   isOpen,
@@ -13,14 +16,21 @@ function ProfileModal({
   setProfileDraft,
   onToggleTheme,
 }) {
+  const [isDeliveryProfilesOpen, setIsDeliveryProfilesOpen] = useState(false);
+
   if (!isOpen) {
     return null;
   }
 
+  const handleClose = () => {
+    setIsDeliveryProfilesOpen(false);
+    onClose();
+  };
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={handleClose}>
       <div className="login-modal profile-modal" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={onClose}>
+        <button type="button" className="modal-close" onClick={handleClose}>
           {labels.close}
         </button>
         <div className="panel-header">
@@ -50,19 +60,6 @@ function ProfileModal({
               }
             />
           </label>
-          <label className="switch-row">
-            <span>{labels.membershipCard}</span>
-            <input
-              type="checkbox"
-              checked={profileDraft.hasCostcoMembership}
-              onChange={(event) =>
-                setProfileDraft((current) => ({
-                  ...current,
-                  hasCostcoMembership: event.target.checked,
-                }))
-              }
-            />
-          </label>
           <button type="button" className="save-button" onClick={onSaveProfile} disabled={isSavingProfile}>
             {isSavingProfile ? labels.saving : labels.save}
           </button>
@@ -72,7 +69,23 @@ function ProfileModal({
               {labels.theme}: {themeMode === 'dark' ? 'Dark' : 'Light'}
             </span>
           </button>
+
+          <div className="profile-address-settings">
+            <div>
+              <strong>我的地址</strong>
+              <span>管理面交、宅配、店到店與 i郵箱資料</span>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setIsDeliveryProfilesOpen(true)}>
+              新增/編輯 我的地點
+            </button>
+          </div>
         </section>
+
+        <PurchaseDeliveryProfilesModal
+          isOpen={isDeliveryProfilesOpen}
+          token={token}
+          onClose={() => setIsDeliveryProfilesOpen(false)}
+        />
       </div>
     </div>
   );

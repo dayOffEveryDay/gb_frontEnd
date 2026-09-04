@@ -20,6 +20,7 @@ import {
   updateCurrentUserProfile,
 } from './api';
 import { formatDateTime, getScenarioLabel, mapCampaign, parseLocalDateTime } from './homeUtils';
+import PurchaseDeliveryProfilesModal from './PurchaseDeliveryProfilesModal';
 
 const CAMPAIGN_STATUS_LABELS = {
   OPEN: '開放加入',
@@ -155,9 +156,7 @@ function areUsersEquivalent(left, right) {
   return (
     String(left.id ?? '') === String(right.id ?? '') &&
     (left.displayName ?? '') === (right.displayName ?? '') &&
-    (left.profileImageUrl ?? left.avatarUrl ?? '') === (right.profileImageUrl ?? right.avatarUrl ?? '') &&
-    Boolean(left.hasCostcoMembership ?? left.has_costco_membership) ===
-      Boolean(right.hasCostcoMembership ?? right.has_costco_membership)
+    (left.profileImageUrl ?? left.avatarUrl ?? '') === (right.profileImageUrl ?? right.avatarUrl ?? '')
   );
 }
 
@@ -199,10 +198,10 @@ function UserProfilePage() {
   const [statusMessage, setStatusMessage] = useState('');
   const [isCreditScoreExpanded, setIsCreditScoreExpanded] = useState(false);
   const [isReceivedReviewsExpanded, setIsReceivedReviewsExpanded] = useState(false);
+  const [isDeliveryProfilesOpen, setIsDeliveryProfilesOpen] = useState(false);
   const [expandedReceivedReviewIds, setExpandedReceivedReviewIds] = useState({});
   const [profileDraft, setProfileDraft] = useState({
     displayName: fallbackUser.displayName ?? '',
-    hasCostcoMembership: Boolean(currentUser?.hasCostcoMembership ?? currentUser?.has_costco_membership),
   });
   const [openFollowingMenuId, setOpenFollowingMenuId] = useState('');
   const [themeMode, setThemeMode] = useState(() => {
@@ -249,7 +248,6 @@ function UserProfilePage() {
     setProfile((current) => normalizeProfileResponse(current, fallbackUser));
     setProfileDraft({
       displayName: fallbackUser.displayName ?? '',
-      hasCostcoMembership: Boolean(currentUser?.hasCostcoMembership ?? currentUser?.has_costco_membership),
     });
   }, [fallbackUser, currentUser]);
 
@@ -457,7 +455,6 @@ function UserProfilePage() {
       await updateCurrentUserProfile(
         {
           displayName: profileDraft.displayName,
-          hasCostcoMembership: profileDraft.hasCostcoMembership,
         },
         token
       );
@@ -465,7 +462,6 @@ function UserProfilePage() {
       const nextStoredUser = {
         ...currentUser,
         displayName: profileDraft.displayName,
-        hasCostcoMembership: profileDraft.hasCostcoMembership,
       };
 
       setCurrentUser(nextStoredUser);
@@ -796,20 +792,6 @@ function UserProfilePage() {
               />
             </label>
 
-            <label className="switch-row">
-              <span>Costco 會員卡</span>
-              <input
-                type="checkbox"
-                checked={profileDraft.hasCostcoMembership}
-                onChange={(event) =>
-                  setProfileDraft((current) => ({
-                    ...current,
-                    hasCostcoMembership: event.target.checked,
-                  }))
-                }
-              />
-            </label>
-
             <button
               type="button"
               className="text-button theme-toggle"
@@ -829,6 +811,21 @@ function UserProfilePage() {
 
             <button type="button" className="secondary-button" onClick={handleLogout}>
               登出
+            </button>
+          </section>
+        )}
+
+        {isSelf && (
+          <section className="user-profile-section">
+            <div className="user-profile-section-heading">
+              <div>
+                <p className="eyebrow">常用交付資料</p>
+                <h2>我的地址</h2>
+              </div>
+            </div>
+            <p className="panel-note">管理面交、宅配、店到店與 i郵箱地點，建立託購時可直接選用。</p>
+            <button type="button" className="secondary-button" onClick={() => setIsDeliveryProfilesOpen(true)}>
+              新增/編輯 我的地點
             </button>
           </section>
         )}
@@ -1027,6 +1024,12 @@ function UserProfilePage() {
         {isSelf && <p className="panel-note">這裡整合了你的個人資料、帳號設定、追蹤清單與封鎖清單。</p>}
         {statusMessage && <p className="inline-warning">{statusMessage}</p>}
         {error && <p className="inline-error">{error}</p>}
+
+        <PurchaseDeliveryProfilesModal
+          isOpen={isSelf && isDeliveryProfilesOpen}
+          token={token}
+          onClose={() => setIsDeliveryProfilesOpen(false)}
+        />
       </section>
     </div>
   );

@@ -11,7 +11,6 @@ import {
   uploadFiles,
 } from './api';
 import ImageGalleryModal from './ImageGalleryModal';
-import { OpenCardIcon } from './Icons';
 
 function normalizeMessage(message) {
   return {
@@ -291,8 +290,8 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
               title="前往訂單詳情"
               aria-label="前往訂單詳情"
             >
-              {room.itemName || '託購交易'}
-              <OpenCardIcon />
+              <span>{room.itemName || '託購交易'}</span>
+              <span className="purchase-chat-order-link-label">訂單詳情</span>
             </button>
             <span className="muted-copy">
               {room.counterpartName ? `交易對象：${room.counterpartName}` : ''} · {isConnected ? '即時連線' : '重新連線中'}

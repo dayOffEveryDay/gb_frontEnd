@@ -79,6 +79,7 @@ import PurchaseOrderModal from './PurchaseOrderModal';
 import ParticipationActionModal from './ParticipationActionModal';
 import ReviewModal from './ReviewModal';
 import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './PurchaseRequestsPanel';
+import { InquiryPanel } from './InquiryPage';
 import { shareCampaign } from './shareUtils';
 import {
   AvatarIcon,
@@ -116,7 +117,6 @@ const DEAL_VIEW_MODE_KEYS = {
 const MARKET_HIDE_FULL_KEY = 'market_hide_full';
 const NOTIFICATION_SOUND_ENABLED_KEY = 'notification_sound_enabled';
 const CHAT_ROOM_PAGE_SIZE = 100;
-const COMPLETED_CHAT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const CHAT_ROOM_LAST_READ_KEY_PREFIX = 'chat_room_last_read';
 
 function getChatRoomLastReadStorageKey(userId) {
@@ -328,8 +328,7 @@ function areUsersEquivalent(left, right) {
   return (
     String(left.id ?? '') === String(right.id ?? '') &&
     (left.displayName ?? '') === (right.displayName ?? '') &&
-    (left.profileImageUrl ?? '') === (right.profileImageUrl ?? '') &&
-    Boolean(left.hasCostcoMembership) === Boolean(right.hasCostcoMembership)
+    (left.profileImageUrl ?? '') === (right.profileImageUrl ?? '')
   );
 }
 
@@ -614,6 +613,8 @@ function normalizeNotification(notification) {
     PURCHASE_ABNORMAL_CLOSED: '託購異常已結案',
     PURCHASE_ABNORMAL_TIMEOUT: '託購異常逾時',
     PURCHASE_CONFIRMATION_TIMEOUT: '託購確認逾時',
+    INQUIRY_NEW_ANSWER: '問題收到新回答',
+    INQUIRY_EXPIRED_NO_ANSWER: '問題已到期',
     NOTICE: '通知',
   };
 
@@ -781,26 +782,12 @@ function buildHostParticipationCampaign(deal, dashboard) {
   };
 }
 
+function getCampaignChatAccess(campaign) {
+  return (campaign?.chatAccess ?? campaign?.chat_access ?? '').toString().trim().toUpperCase();
+}
+
 function canOpenCampaignChat(campaign) {
-  if (!hasUsableCampaignId(campaign)) {
-    return false;
-  }
-
-  const statusSource = [
-    campaign?.status,
-    campaign?.campaignStatus,
-    campaign?.campaign_status,
-    campaign?.state,
-  ]
-    .find(Boolean)
-    ?.toString()
-    .toUpperCase();
-
-  if (!statusSource) {
-    return Number(campaign?.availableQuantity) <= 0;
-  }
-
-  return ['FULL', 'DELIVERED', 'COMPLETED', 'CONFIRMED'].some((status) => statusSource.includes(status));
+  return hasUsableCampaignId(campaign) && ['READ_WRITE', 'READ_ONLY'].includes(getCampaignChatAccess(campaign));
 }
 
 function getCampaignIdValue(campaign) {
@@ -894,45 +881,8 @@ function getCampaignEstablishedAtValue(campaign) {
   );
 }
 
-function hasClosedChatFlag(campaign) {
-  const stopped = campaign?.chatStopped ?? campaign?.chat_stopped ?? campaign?.chatClosed ?? campaign?.chat_closed;
-  if (stopped === true) {
-    return true;
-  }
-
-  const available =
-    campaign?.chatAvailable ?? campaign?.chat_available ?? campaign?.chatEnabled ?? campaign?.chat_enabled ?? campaign?.canChat;
-  return available === false;
-}
-
-function isPastDateTime(value) {
-  const date = parseLocalDateTime(value);
-  return Boolean(date && date.getTime() <= Date.now());
-}
-
-function isCampaignCompletedChatExpired(campaign) {
-  if (getCampaignStatusValue(campaign) !== 'COMPLETED') {
-    return false;
-  }
-
-  const completedDate = parseLocalDateTime(getCampaignCompletedAtValue(campaign));
-  if (!completedDate) {
-    return false;
-  }
-
-  return Date.now() >= completedDate.getTime() + COMPLETED_CHAT_RETENTION_MS;
-}
-
-function isCampaignChatClosed(campaign) {
-  return (
-    hasClosedChatFlag(campaign) ||
-    isPastDateTime(getCampaignChatExpiresAtValue(campaign)) ||
-    isCampaignCompletedChatExpired(campaign)
-  );
-}
-
 function canListCampaignChatRoom(campaign) {
-  return canOpenCampaignChat(campaign) && !isCampaignChatClosed(campaign);
+  return canOpenCampaignChat(campaign);
 }
 
 function getChatRoomSortTime(campaign) {
@@ -952,8 +902,26 @@ function getChatRoomSortTime(campaign) {
 function buildOpenChatRooms(hostedData, joinedData) {
   return buildMineCampaigns(hostedData, joinedData, 'ALL', 'ALL')
     .filter(hasUsableCampaignId)
-    .filter(canListCampaignChatRoom)
     .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
+}
+
+async function attachCampaignChatAccess(campaigns, token) {
+  return mapWithConcurrency(campaigns, 4, async (campaign) => {
+    const campaignId = getNormalizedCampaignId(campaign);
+    if (campaignId == null) {
+      return { ...campaign, chatAccess: 'NONE' };
+    }
+
+    try {
+      const participation = await fetchMyParticipation(campaignId, token);
+      return { ...campaign, chatAccess: getCampaignChatAccess(participation) || 'NONE' };
+    } catch (error) {
+      if (error?.message === AUTH_EXPIRED_MESSAGE) {
+        throw error;
+      }
+      return { ...campaign, chatAccess: 'NONE' };
+    }
+  });
 }
 
 function getNavigationTabValue(type) {
@@ -1058,6 +1026,10 @@ function isReviewCampaignNotification(notification) {
   return notification?.type === 'CAMPAIGN_COMPLETED' && notification?.referenceId != null;
 }
 
+function isPurchaseChatNotification(notification) {
+  return notification?.type === 'PURCHASE_CHAT_MESSAGE' && notification?.referenceId != null;
+}
+
 function isPurchaseOrderNotification(notification) {
   const type = notification?.type;
 
@@ -1066,7 +1038,6 @@ function isPurchaseOrderNotification(notification) {
     [
       'PURCHASE_QUOTE_SELECTED',
       'PURCHASE_ACCEPTED',
-      'PURCHASE_CHAT_MESSAGE',
       'PURCHASE_ORDER_STARTED',
       'PURCHASE_ITEM_UNAVAILABLE',
       'PURCHASE_ORDER_CANCELLED',
@@ -1080,6 +1051,10 @@ function isPurchaseOrderNotification(notification) {
       'PURCHASE_CONFIRMATION_TIMEOUT',
     ].includes(type)
   );
+}
+
+function isInquiryNotification(notification) {
+  return ['INQUIRY_NEW_ANSWER', 'INQUIRY_EXPIRED_NO_ANSWER'].includes(notification?.type) && notification.referenceId != null;
 }
 
 const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
@@ -1150,6 +1125,8 @@ function HomePage() {
   const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
   const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
   const [activeStoreIds, setActiveStoreIds] = useState([]);
+  const [inquiryTargetId, setInquiryTargetId] = useState(null);
+  const [isInquiryDetailOpen, setIsInquiryDetailOpen] = useState(false);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const [campaigns, setCampaigns] = useState([]);
@@ -1183,7 +1160,6 @@ function HomePage() {
   const [profileDraft, setProfileDraft] = useState(
     normalizeUser(getStoredUser()) ?? {
       displayName: '',
-      hasCostcoMembership: false,
     }
   );
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -1306,6 +1282,7 @@ function HomePage() {
   const navigationRef = useRef(null);
   const searchReturnContextRef = useRef(null);
   const notificationClientRef = useRef(null);
+  const chatCampaignRef = useRef(null);
   const purchaseChatRoomRef = useRef(null);
   const liveNotificationTimersRef = useRef(new Map());
   const successToastTimerRef = useRef(null);
@@ -1339,6 +1316,10 @@ function HomePage() {
   useEffect(() => {
     chatRoomsRef.current = chatRooms;
   }, [chatRooms]);
+
+  useEffect(() => {
+    chatCampaignRef.current = chatCampaign;
+  }, [chatCampaign]);
 
   useEffect(() => {
     purchaseChatRoomRef.current = purchaseChatRoom;
@@ -1662,7 +1643,7 @@ function HomePage() {
       });
       setToken(event.data.token);
       setUser(nextUser);
-      setProfileDraft(nextUser ?? { displayName: '', hasCostcoMembership: false });
+      setProfileDraft(nextUser ?? { displayName: '' });
       setAuthLoading(false);
       setAuthError('');
       setIsLoginModalOpen(false);
@@ -1813,6 +1794,48 @@ function HomePage() {
                 setNotificationsError('通知資料解析失敗');
               }
             });
+
+            client.subscribe('/user/queue/chat-access', (frame) => {
+              try {
+                const payload = JSON.parse(frame.body);
+                if (payload?.type !== 'CHAT_ACCESS_REVOKED' || payload?.campaignId == null || disposed) {
+                  return;
+                }
+
+                const revokedCampaignId = String(payload.campaignId);
+                setChatRooms((current) =>
+                  current.filter(
+                    (room) =>
+                      room?.roomType === 'PURCHASE' || String(getNormalizedCampaignId(room)) !== revokedCampaignId
+                  )
+                );
+                setParticipationCampaign((current) =>
+                  current && String(getNormalizedCampaignId(current)) === revokedCampaignId
+                    ? { ...current, chatAccess: 'NONE' }
+                    : current
+                );
+
+                if (String(getNormalizedCampaignId(chatCampaignRef.current)) === revokedCampaignId) {
+                  chatReturnContextRef.current = null;
+                  setChatCampaign(null);
+                  setSuccessToast({
+                    title: '聊天室權限已移除',
+                    message: '你已退出或被移出這個團購，聊天室已關閉。',
+                  });
+                  if (successToastTimerRef.current) {
+                    window.clearTimeout(successToastTimerRef.current);
+                  }
+                  successToastTimerRef.current = window.setTimeout(() => {
+                    setSuccessToast(null);
+                    successToastTimerRef.current = null;
+                  }, 3600);
+                }
+
+                setRefreshKey((current) => current + 1);
+              } catch {
+                setNotificationsError('聊天室權限事件解析失敗');
+              }
+            });
           },
           onStompError: (frame) => {
             setNotificationsError(frame.headers.message || '通知連線發生錯誤');
@@ -1947,11 +1970,9 @@ function HomePage() {
             fetchMyHostedCampaigns(mineQuery, token),
             fetchMyJoinedCampaigns(mineQuery, token),
           ]);
-          const nextCampaigns = buildMineCampaigns(
-            hostedData,
-            joinedData,
-            activeMyCampaignScope,
-            activeMyCampaignFilter
+          const nextCampaigns = await attachCampaignChatAccess(
+            buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter),
+            token
           );
           const nextSignature = getCampaignListSignature(nextCampaigns);
 
@@ -2024,7 +2045,10 @@ function HomePage() {
         fetchMyHostedCampaigns(mineQuery, token),
         fetchMyJoinedCampaigns(mineQuery, token),
       ]);
-      const nextCampaigns = buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter);
+      const nextCampaigns = await attachCampaignChatAccess(
+        buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter),
+        token
+      );
       const nextSignature = getCampaignListSignature(nextCampaigns);
 
       if (nextSignature !== campaignsSignatureRef.current) {
@@ -2155,7 +2179,7 @@ function HomePage() {
       });
       setToken(data.token);
       setUser(nextUser);
-      setProfileDraft(nextUser ?? { displayName: '', hasCostcoMembership: false });
+      setProfileDraft(nextUser ?? { displayName: '' });
       setIsLoginModalOpen(false);
       setIsProfileOpen(false);
       setIsNotificationsOpen(false);
@@ -2172,7 +2196,7 @@ function HomePage() {
     clearStoredAuth();
     setToken('');
     setUser(null);
-    setProfileDraft({ displayName: '', hasCostcoMembership: false });
+    setProfileDraft({ displayName: '' });
     setIsProfileOpen(false);
     setIsNotificationsOpen(false);
     setIsChatRoomsOpen(false);
@@ -2373,7 +2397,28 @@ function HomePage() {
         return;
       }
 
-      const openRooms = buildOpenChatRooms(hostedData, joinedData);
+      const roomCandidates = buildOpenChatRooms(hostedData, joinedData);
+      const accessResults = await mapWithConcurrency(roomCandidates, 4, async (room) => {
+        const roomId = getNormalizedCampaignId(room);
+
+        if (roomId == null) {
+          return null;
+        }
+
+        try {
+          const participation = await fetchMyParticipation(roomId, token);
+          return {
+            ...room,
+            chatAccess: getCampaignChatAccess(participation),
+          };
+        } catch (error) {
+          if (error?.message === AUTH_EXPIRED_MESSAGE) {
+            throw error;
+          }
+          return null;
+        }
+      });
+      const openRooms = accessResults.filter(Boolean).filter(canListCampaignChatRoom);
       const roomsWithUnreadCounts = await mapWithConcurrency(openRooms, 4, async (room) => {
         const roomId = getNormalizedCampaignId(room);
 
@@ -2416,8 +2461,13 @@ function HomePage() {
       if (!silent && hasSourceError) {
         setChatRoomsError(CHAT_ROOMS_LOAD_ERROR_MESSAGE);
       }
-    } catch {
-      if (!silent) {
+    } catch (error) {
+      if (error?.message === AUTH_EXPIRED_MESSAGE) {
+        setChatRooms([]);
+        setChatRoomsError(AUTH_EXPIRED_MESSAGE);
+        setAuthError(AUTH_EXPIRED_MESSAGE);
+        setIsLoginModalOpen(true);
+      } else if (!silent) {
         setChatRoomsError(CHAT_ROOMS_LOAD_ERROR_MESSAGE);
       }
     } finally {
@@ -2540,18 +2590,27 @@ function HomePage() {
       return;
     }
 
-    const isChatNotification = isFullCampaignNotification(notification);
+    const isCampaignOrderNotification = isFullCampaignNotification(notification);
     const isReviewNotification = isReviewCampaignNotification(notification);
+    const isPurchaseChat = isPurchaseChatNotification(notification);
     const isPurchaseNotification = isPurchaseOrderNotification(notification);
+    const isInquiry = isInquiryNotification(notification);
 
-    if (!isChatNotification && !isReviewNotification && !isPurchaseNotification) {
+    if (!isCampaignOrderNotification && !isReviewNotification && !isPurchaseChat && !isPurchaseNotification && !isInquiry) {
       await markNotificationAsRead(notification.id, notification);
       return;
     }
 
     await markNotificationAsRead(notification.id, notification);
 
-    if (isPurchaseNotification) {
+    if (isInquiry) {
+      setIsNotificationsOpen(false);
+      setInquiryTargetId(notification.referenceId);
+      switchActiveType('INQUIRY');
+      return;
+    }
+
+    if (isPurchaseChat) {
       const opened = await handleOpenPurchaseChat(
         { orderId: notification.referenceId },
         { returnContext: returnToNotifications ? { type: 'NOTIFICATIONS' } : null }
@@ -2562,11 +2621,22 @@ function HomePage() {
       return;
     }
 
+    if (isPurchaseNotification) {
+      if (returnToNotifications) setIsNotificationsOpen(false);
+      setPurchaseOrderFromChat({
+        id: notification.referenceId,
+        orderId: notification.referenceId,
+        openedFromNotification: true,
+        returnToNotifications,
+      });
+      return;
+    }
+
     try {
       const targetCampaign = await findCampaignForNotification(notification.referenceId);
 
       if (!targetCampaign) {
-        setNotificationsError(`${getCampaignDisplayName(null, notification.referenceId)}已找不到，無法開啟聊天室。`);
+        setNotificationsError(`${getCampaignDisplayName(null, notification.referenceId)}已找不到，無法開啟詳情。`);
         return;
       }
 
@@ -2595,6 +2665,12 @@ function HomePage() {
         }
 
         setNotificationsError('找不到可評價的對象');
+        return;
+      }
+
+      if (isCampaignOrderNotification) {
+        if (returnToNotifications) setIsNotificationsOpen(false);
+        await handleOpenParticipation(targetCampaign);
         return;
       }
 
@@ -2627,7 +2703,6 @@ function HomePage() {
       await updateCurrentUserProfile(
         {
           displayName: profileDraft.displayName,
-          hasCostcoMembership: profileDraft.hasCostcoMembership,
         },
         token
       );
@@ -3008,7 +3083,9 @@ function HomePage() {
     if (
       isFullCampaignNotification(notification) ||
       isReviewCampaignNotification(notification) ||
-      isPurchaseOrderNotification(notification)
+      isPurchaseChatNotification(notification) ||
+      isPurchaseOrderNotification(notification) ||
+      isInquiryNotification(notification)
     ) {
       await handleNotificationAction(notification);
       return;
@@ -3328,10 +3405,16 @@ function HomePage() {
     let nextDeal = deal;
     try {
       nextDeal = await refreshMineCampaignsBeforeOpen(deal);
+      const participation = await fetchMyParticipation(getNormalizedCampaignId(nextDeal), token);
+      nextDeal = {
+        ...nextDeal,
+        chatAccess: getCampaignChatAccess(participation),
+      };
     } catch (error) {
       if (showError) {
-        setCampaignError(error instanceof Error ? error.message : '團購資料刷新失敗');
+        setCampaignError(error instanceof Error ? error.message : '無法確認聊天室權限');
       }
+      return false;
     }
 
     if (!canOpenCampaignChat(nextDeal)) {
@@ -3600,8 +3683,14 @@ function HomePage() {
       const isHostDeal = isSameUserId(nextDeal.host?.id, user?.id) || nextDeal.isHost;
 
       if (isHostDeal) {
-        const dashboard = await fetchHostDashboard(nextDeal.id, token);
-        const nextCampaign = buildHostParticipationCampaign(nextDeal, dashboard);
+        const [dashboard, participation] = await Promise.all([
+          fetchHostDashboard(nextDeal.id, token),
+          fetchMyParticipation(nextDeal.id, token),
+        ]);
+        const nextCampaign = {
+          ...buildHostParticipationCampaign(nextDeal, dashboard),
+          chatAccess: getCampaignChatAccess(participation),
+        };
 
         setParticipationCampaign(nextCampaign);
         setParticipationQuantityDraft(String(nextCampaign.hostReservedQuantity));
@@ -3624,6 +3713,7 @@ function HomePage() {
         .toUpperCase();
       const mergedDeal = {
         ...nextDeal,
+        chatAccess: getCampaignChatAccess(participation),
         managementMode: 'JOINED',
         isHost: Boolean(participation?.host ?? nextDeal.isHost),
         myParticipantStatus: participantStatus || nextDeal?.myParticipantStatus || '',
@@ -3870,8 +3960,12 @@ function HomePage() {
 
       try {
         if (isHostCampaign) {
-          const dashboard = await fetchHostDashboard(campaignId, token);
+          const [dashboard, participation] = await Promise.all([
+            fetchHostDashboard(campaignId, token),
+            fetchMyParticipation(campaignId, token),
+          ]);
           const normalizedDashboard = normalizeHostDashboard(dashboard);
+          const nextChatAccess = getCampaignChatAccess(participation);
 
           setChatCampaign((current) =>
             current && Number(current.id) === Number(campaignId)
@@ -3879,18 +3973,19 @@ function HomePage() {
                   ...current,
                   status: normalizedDashboard.status || normalizedStatus,
                   dashboard: normalizedDashboard,
+                  chatAccess: nextChatAccess,
                 }
               : current
           );
           setParticipationCampaign((current) =>
             current && Number(current.id) === Number(campaignId)
-              ? buildHostParticipationCampaign(
-                  {
+              ? {
+                  ...buildHostParticipationCampaign({
                     ...current,
                     status: normalizedDashboard.status || normalizedStatus,
-                  },
-                  dashboard
-                )
+                  }, dashboard),
+                  chatAccess: nextChatAccess,
+                }
               : current
           );
           setParticipationQuantityDraft(String(normalizedDashboard.hostReservedQuantity));
@@ -3918,6 +4013,7 @@ function HomePage() {
           campaignStatus: normalizedStatus,
           myParticipantStatus: participantStatus,
           participantStatus,
+          chatAccess: getCampaignChatAccess(participation),
           joined: participantStatus ? isViewableParticipantStatus(participantStatus) : Boolean(participation?.joined),
           quantity: joinedQuantity,
         };
@@ -3994,9 +4090,17 @@ function HomePage() {
         });
       }
 
-      if (!isSameUserId(latestCampaign.host?.id, user?.id) && !latestCampaign.isHost) {
-        try {
-          const participation = await fetchMyParticipation(campaignId, token);
+      try {
+        const participation = await fetchMyParticipation(campaignId, token);
+        const nextChatAccess = getCampaignChatAccess(participation);
+
+        if (isSameUserId(latestCampaign.host?.id, user?.id) || latestCampaign.isHost) {
+          setChatCampaign((current) =>
+            current && Number(current.id) === Number(campaignId)
+              ? { ...current, chatAccess: nextChatAccess }
+              : current
+          );
+        } else {
           const participantStatus = (
             participation?.myParticipantStatus ??
             participation?.my_participant_status ??
@@ -4021,14 +4125,15 @@ function HomePage() {
                   ...current,
                   myParticipantStatus: participantStatus,
                   participantStatus,
+                  chatAccess: nextChatAccess,
                   joined: participantStatus ? isViewableParticipantStatus(participantStatus) : current.joined,
                   quantity: joinedQuantity || current.quantity,
                 }
               : current
           );
-        } catch {
-          // The latest campaign payload is still enough to update status-driven chat actions.
         }
+      } catch {
+        // The latest campaign payload is still enough to update status-driven chat actions.
       }
     },
     [findCampaignForNotification, token, user?.id]
@@ -4496,6 +4601,7 @@ function HomePage() {
 
       <ProfileModal
         labels={LABELS}
+        token={token}
         user={user}
         profileDraft={profileDraft}
         isOpen={isProfileOpen}
@@ -4617,7 +4723,7 @@ function HomePage() {
         token={token}
         currentUser={user}
         onRead={markPurchaseRoomAsRead}
-        onOpenOrder={(order) => setPurchaseOrderFromChat(order)}
+        onOpenOrder={(order) => setPurchaseOrderFromChat({ ...order, openedFromChat: true })}
         onClose={handleClosePurchaseChat}
       />
 
@@ -4626,9 +4732,24 @@ function HomePage() {
         orderId={purchaseOrderFromChat?.id ?? purchaseOrderFromChat?.orderId}
         token={token}
         currentUser={user}
-        onOpenChat={() => setPurchaseOrderFromChat(null)}
+        onOpenChat={async (order) => {
+          if (purchaseOrderFromChat?.openedFromChat) {
+            setPurchaseOrderFromChat(null);
+            return;
+          }
+          const returnToNotifications = Boolean(purchaseOrderFromChat?.returnToNotifications);
+          const opened = await handleOpenPurchaseChat(
+            { ...order, orderId: order?.id ?? purchaseOrderFromChat?.orderId },
+            { returnContext: returnToNotifications ? { type: 'NOTIFICATIONS' } : null }
+          );
+          if (opened) setPurchaseOrderFromChat(null);
+        }}
         onUpdated={() => void loadOpenChatRooms({ silent: true })}
-        onClose={() => setPurchaseOrderFromChat(null)}
+        onClose={() => {
+          const returnToNotifications = Boolean(purchaseOrderFromChat?.returnToNotifications);
+          setPurchaseOrderFromChat(null);
+          if (returnToNotifications) setIsNotificationsOpen(true);
+        }}
       />
 
       <ParticipationActionModal
@@ -4763,15 +4884,17 @@ function HomePage() {
             onOpenPurchaseChat={handleOpenPurchaseChat}
           />
         ) : activeType === 'INQUIRY' ? (
-          <section className="inquiry-placeholder" aria-labelledby="inquiry-page-title">
-            <div className="inquiry-placeholder-icon"><BulbIcon /></div>
-            <div className="inquiry-title-row">
-              <h1 id="inquiry-page-title">詢問區</h1>
-              <p className="eyebrow">門市即時情報</p>
-            </div>
-            <p>想知道特定門市是否還有某項商品？詢問與回答功能正在開發中。</p>
-            <span>預計支援門市提問、社群回答，以及最長 7 天的有效期限。</span>
-          </section>
+          <InquiryPanel
+            token={token}
+            currentUser={user}
+            stores={stores}
+            activeStoreIds={activeStoreIds}
+            openInquiryId={inquiryTargetId}
+            onOpenInquiryHandled={() => setInquiryTargetId(null)}
+            onDetailViewChange={setIsInquiryDetailOpen}
+            onRequireLogin={() => setIsLoginModalOpen(true)}
+            onShowToast={({ title, message }) => showSuccessToast(title, message)}
+          />
         ) : activeType === 'MINE' ? (
           <section className="mine-page-header page-header-panel">
             <div className="page-identity-heading compact">
@@ -5253,7 +5376,7 @@ function HomePage() {
                       getTypeClass={getTypeClass}
                       onJoin={handleOpenJoinCampaign}
                       onOpenGallery={handleOpenGallery}
-                      onOpenChat={activeType === 'MINE' ? handleOpenChat : undefined}
+                      onOpenChat={activeType === 'MINE' && canOpenCampaignChat(deal) ? handleOpenChat : undefined}
                       onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
                       onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
                       onShare={shareCampaign}
@@ -5273,9 +5396,9 @@ function HomePage() {
       </main>
 
       {!isSearchExpanded && !isChatFocusMode && activeType !== 'INQUIRY' && renderFloatingDealViewControl()}
-      {!isSearchExpanded && !isChatFocusMode && renderPageDots()}
+      {!isSearchExpanded && !isChatFocusMode && !(activeType === 'INQUIRY' && isInquiryDetailOpen) && renderPageDots()}
 
-      {!isChatFocusMode && <div ref={navigationRef} className="mobile-navigation-fab">
+      {!isChatFocusMode && !(activeType === 'INQUIRY' && isInquiryDetailOpen) && <div ref={navigationRef} className="mobile-navigation-fab">
         {isNavigationOpen && (
           <div className="mobile-navigation-menu" id="mobile-navigation-menu" role="menu">
             <button

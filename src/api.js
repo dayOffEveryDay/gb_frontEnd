@@ -338,6 +338,44 @@ export function fetchCategories() {
   return request('/api/v1/categories', { auth: false });
 }
 
+// 詢問：列表、明細與相似問題為公開資料；需要操作時才帶入登入 token。
+export function fetchInquiries(params, token) {
+  return request('/api/inquiries', { query: params, token, auth: Boolean(token) });
+}
+
+export function fetchInquiry(inquiryId, token) {
+  return request(`/api/inquiries/${inquiryId}`, { token, auth: Boolean(token) });
+}
+
+export function fetchSimilarInquiries(params, token) {
+  return request('/api/inquiries/similar', { query: params, token, auth: Boolean(token) });
+}
+
+export function createInquiry(payload, token) {
+  const formData = new FormData();
+  const { images = [], ...requestPayload } = payload;
+  formData.append('request', new Blob([JSON.stringify(requestPayload)], { type: 'application/json' }));
+  images.slice(0, 1).forEach((file) => formData.append('images', file));
+  return request('/api/inquiries', { method: 'POST', body: formData, token });
+}
+
+export function createInquiryAnswer(inquiryId, payload, token) {
+  return request(`/api/inquiries/${inquiryId}/answers`, { method: 'POST', body: payload, token });
+}
+
+// 修改自己的問題回答；回答建立者與問題 ID 由後端一併驗證。
+export function updateInquiryAnswer(inquiryId, answerId, payload, token) {
+  return request(`/api/inquiries/${inquiryId}/answers/${answerId}`, { method: 'PUT', body: payload, token });
+}
+
+export function followInquiry(inquiryId, token) {
+  return request(`/api/inquiries/${inquiryId}/follow`, { method: 'POST', token });
+}
+
+export function unfollowInquiry(inquiryId, token) {
+  return request(`/api/inquiries/${inquiryId}/follow`, { method: 'DELETE', token });
+}
+
 // 取得團購列表，支援分頁與篩選條件。
 export function fetchCampaigns(params) {
   return request('/api/v1/campaigns', { query: params });
@@ -696,6 +734,13 @@ export function extendPurchaseRequest(requestId, requestExpireTime, token) {
   return request(`/api/v1/purchase-requests/${requestId}/extend`, {
     method: 'PATCH',
     body: { requestExpireTime },
+    token,
+  });
+}
+
+export function reopenPurchaseRequest(requestId, token) {
+  return request(`/api/v1/purchase-requests/${requestId}/reopen`, {
+    method: 'POST',
     token,
   });
 }

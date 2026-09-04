@@ -16,6 +16,7 @@ import {
   fetchMyCreatedPurchaseRequests,
   fetchMyQuotedPurchaseRequests,
   fetchPurchaseOrders,
+  fetchPurchaseRequest,
   fetchPurchaseRequestQuotes,
   fetchPurchaseRequests,
   fetchUserDeliveryProfiles,
@@ -53,12 +54,14 @@ const DELIVERY_LABELS = {
   FACE_TO_FACE: '面交',
   STORE_TO_STORE: '店到店',
   HOME_DELIVERY: '宅配',
+  IBOX: 'i郵箱',
 };
 
 const STATUS_LABELS = {
   OPEN: '開放中',
   QUOTING: '報價中',
   ORDERED: '已成立',
+  AWAITING_REOPEN: '待重新開放',
   ASSIGNED: '已指派',
   DELIVERED: '已交付',
   CANCELLED: '已取消',
@@ -91,6 +94,103 @@ function getDeliveryLabel(deliveryMethod) {
   return DELIVERY_LABELS[key] ?? deliveryMethod ?? '--';
 }
 
+function toRequestExpireDateTime(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T23:59:59`;
+  if (value?.length === 16) return `${value}:00`;
+  return value;
+}
+
+function getHomeDeliveryFullAddress(profile) {
+  const city = profile.city ?? '';
+  const district = profile.district ?? '';
+  const region = `${city}${district}`.trim();
+  const savedAddress = (profile.address ?? '').trim();
+  return savedAddress.startsWith(region) ? savedAddress : `${region}${savedAddress}`;
+}
+
+function getDeliveryProfileChoiceLabel(profile, deliveryMethod) {
+  const label = profile.label || profile.locationName || profile.address || getDeliveryLabel(profile.profileType);
+  if (!['STORE_TO_STORE', 'IBOX'].includes(deliveryMethod) || !profile.provider || profile.provider === label) return label;
+  return `${profile.provider} · ${label}`;
+}
+
+function getDeliveryProfileChoiceDetail(profile, deliveryMethod) {
+  if (deliveryMethod === 'HOME_DELIVERY') return getHomeDeliveryFullAddress(profile);
+  const location = [profile.city, profile.district, profile.locationName].filter(Boolean).join('');
+  const code = profile.locationCode ? `代碼 ${profile.locationCode}` : '';
+  return [location, code].filter(Boolean).join(' · ');
+}
+
+function DeliveryProfileSingleSelect({ profiles, deliveryMethod, selectedProfileIds, onChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selectedProfile = profiles.find((profile) =>
+    selectedProfileIds.some((id) => String(id) === String(profile.id))
+  );
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (!rootRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const selectedLabel = selectedProfile ? getDeliveryProfileChoiceLabel(selectedProfile, deliveryMethod) : '';
+  const selectedDetail = selectedProfile ? getDeliveryProfileChoiceDetail(selectedProfile, deliveryMethod) : '';
+
+  return (
+    <div className="delivery-profile-combobox" ref={rootRef}>
+      <button
+        type="button"
+        className={`delivery-profile-combobox-trigger${isOpen ? ' open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <span className="delivery-profile-combobox-copy">
+          <strong>{selectedLabel || `請選擇${getDeliveryLabel(deliveryMethod)}資料`}</strong>
+          {selectedDetail && <small>{selectedDetail}</small>}
+        </span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+      </button>
+
+      {isOpen && (
+        <div className="delivery-profile-combobox-menu" role="listbox" aria-label={`選擇${getDeliveryLabel(deliveryMethod)}資料`}>
+          {profiles.map((profile) => {
+            const selected = selectedProfile && String(selectedProfile.id) === String(profile.id);
+            const detail = getDeliveryProfileChoiceDetail(profile, deliveryMethod);
+            return (
+              <button
+                key={profile.id}
+                type="button"
+                className={`delivery-profile-combobox-option${selected ? ' selected' : ''}`}
+                role="option"
+                aria-selected={Boolean(selected)}
+                onClick={() => { onChange(profile.id); setIsOpen(false); }}
+              >
+                <span className="delivery-profile-combobox-copy">
+                  <strong>{getDeliveryProfileChoiceLabel(profile, deliveryMethod)}</strong>
+                  {detail && <small>{detail}</small>}
+                </span>
+                <span className="delivery-profile-combobox-check" aria-hidden="true">✓</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STATUS_OPTIONS = [
   { value: 'ALL', label: '全部' },
   { value: 'OPEN', label: STATUS_LABELS.OPEN },
@@ -112,15 +212,9 @@ const INITIAL_FORM = {
   rewardType: 'FIXED',
   fixedRewardAmount: '',
   deliveryMethod: 'FACE_TO_FACE',
-  requesterCity: '',
-  requesterDistrict: '',
-  deliveryPublicSummary: '',
   requestExpireTime: '',
   deliveryDeadlineHours: '72',
   minCreditScore: '',
-  receiverName: '',
-  receiverPhone: '',
-  addressDetail: '',
   selectedProfileIds: [],
   images: [],
 };
@@ -145,6 +239,16 @@ function normalizePurchaseRequest(item) {
       ? item.image_urls
       : [];
   const requester = item?.requester ?? item?.requesterSummary ?? item?.requester_summary ?? {};
+  const deliveryDetails = Array.isArray(item?.deliveryDetails)
+    ? item.deliveryDetails
+    : Array.isArray(item?.delivery_details)
+      ? item.delivery_details
+      : [];
+  const deliveryAreas = [...new Set(
+    deliveryDetails
+      .map((detail) => [detail?.city, detail?.district].filter(Boolean).join('').trim())
+      .filter(Boolean)
+  )];
 
   return {
     ...item,
@@ -158,11 +262,13 @@ function normalizePurchaseRequest(item) {
     requesterCity: item?.requesterCity ?? item?.requester_city ?? '',
     requesterDistrict: item?.requesterDistrict ?? item?.requester_district ?? '',
     requestArea:
+      deliveryAreas.join('、') ||
       [item?.requesterCity ?? item?.requester_city, item?.requesterDistrict ?? item?.requester_district]
         .filter(Boolean)
         .join('') || item?.requestArea || item?.request_area || '',
     deliveryPublicSummary:
       item?.deliveryPublicSummary ?? item?.delivery_public_summary ?? item?.deliveryTimeNote ?? item?.delivery_time_note ?? '',
+    deliveryDetails,
     deadlineAt: item?.requestExpireTime ?? item?.request_expire_time ?? item?.deadlineAt ?? item?.deadline_at ?? '',
     deliveryDeadlineHours: item?.deliveryDeadlineHours ?? item?.delivery_deadline_hours ?? null,
     minCreditScore: item?.minCreditScore ?? item?.min_credit_score ?? null,
@@ -288,12 +394,19 @@ function normalizeQuote(quote) {
 
 function normalizeQuoteAsPurchaseRequest(quote) {
   const normalizedQuote = normalizeQuote(quote);
+  const itemImageUrls = Array.isArray(quote?.itemImageUrls)
+    ? quote.itemImageUrls
+    : Array.isArray(quote?.item_image_urls)
+      ? quote.item_image_urls
+      : [];
 
   return {
     ...normalizePurchaseRequest({
       ...quote,
       id: normalizedQuote.purchaseRequestId,
       itemName: quote?.itemName ?? quote?.item_name,
+      imageUrls: itemImageUrls,
+      requesterDisplayName: quote?.requesterDisplayName ?? quote?.requester_display_name,
       status: normalizedQuote.status,
       rewardType: 'QUOTE',
     }),
@@ -399,17 +512,17 @@ function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClos
     if (!isOpen || !token) return;
     setDeliveryProfileError('');
     try {
-      const data = await fetchUserDeliveryProfiles('FACE_TO_FACE', token);
+      const data = await fetchUserDeliveryProfiles(form.deliveryMethod, token);
       setDeliveryProfiles(Array.isArray(data) ? data : []);
     } catch (nextError) {
       setDeliveryProfileError(nextError instanceof Error ? nextError.message : '常用交付資料載入失敗');
     }
-  }, [isOpen, token]);
+  }, [form.deliveryMethod, isOpen, token]);
 
   useEffect(() => {
     if (!isOpen || !token) return undefined;
     let cancelled = false;
-    fetchUserDeliveryProfiles('FACE_TO_FACE', token)
+    fetchUserDeliveryProfiles(form.deliveryMethod, token)
       .then((data) => {
         if (!cancelled) setDeliveryProfiles(Array.isArray(data) ? data : []);
       })
@@ -417,14 +530,18 @@ function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClos
         if (!cancelled) setDeliveryProfileError(nextError instanceof Error ? nextError.message : '常用交付資料載入失敗');
       });
     return () => { cancelled = true; };
-  }, [isOpen, token]);
+  }, [form.deliveryMethod, isOpen, token]);
 
   if (!isOpen) {
     return null;
   }
 
   const updateField = (key, value) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === 'deliveryMethod' ? { selectedProfileIds: [] } : {}),
+    }));
   };
 
   const updateImages = (files) => {
@@ -671,51 +788,69 @@ function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClos
             )}
           </div>
 
+          <label className="form-field">
+            <span>交貨方式 *</span>
+            <select value={form.deliveryMethod} onChange={(event) => updateField('deliveryMethod', event.target.value)}>
+              <option value="FACE_TO_FACE">面交</option>
+              <option value="HOME_DELIVERY">宅配</option>
+              <option value="STORE_TO_STORE">店到店</option>
+              <option value="IBOX">i郵箱</option>
+            </select>
+          </label>
+
+          <section className="delivery-profile-picker">
+            <div className="delivery-profile-picker-header">
+              <div>
+                <strong>選擇{getDeliveryLabel(form.deliveryMethod)}資料 *</strong>
+                {form.deliveryMethod === 'FACE_TO_FACE' && <p className="field-hint">面交地點可以複選。</p>}
+              </div>
+              <button type="button" className="text-button" onClick={() => setIsDeliveryProfilesOpen(true)}>
+                新增/編輯 我的地點
+              </button>
+            </div>
+            {deliveryProfiles.length === 0 ? (
+              <p className="field-hint">尚未建立{getDeliveryLabel(form.deliveryMethod)}資料，請先點「新增/編輯 我的地點」新增。</p>
+            ) : form.deliveryMethod === 'FACE_TO_FACE' ? (
+              <div className="delivery-profile-picker-options">
+                {deliveryProfiles.map((profile) => {
+                  const checked = form.selectedProfileIds.some((id) => String(id) === String(profile.id));
+                  const detail = [profile.city, profile.district, profile.locationName || profile.address, profile.provider].filter(Boolean).join(' ');
+                  return (
+                    <label key={profile.id} className="market-checkbox-filter">
+                      <input
+                        type="checkbox"
+                        name="delivery-profile"
+                        checked={checked}
+                        onChange={(event) => updateField('selectedProfileIds', event.target.checked ? [...form.selectedProfileIds, profile.id] : form.selectedProfileIds.filter((id) => String(id) !== String(profile.id)))}
+                      />
+                      <span>{profile.label || detail || getDeliveryLabel(profile.profileType)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <DeliveryProfileSingleSelect
+                profiles={deliveryProfiles}
+                deliveryMethod={form.deliveryMethod}
+                selectedProfileIds={form.selectedProfileIds}
+                onChange={(profileId) => updateField('selectedProfileIds', [profileId])}
+              />
+            )}
+            {deliveryProfileError && <p className="inline-error">{deliveryProfileError}</p>}
+          </section>
+
           <div className="purchase-request-two-col">
             <label className="form-field">
-              <span>交貨方式 *</span>
-              <select value={form.deliveryMethod} onChange={(event) => updateField('deliveryMethod', event.target.value)}>
-                <option value="FACE_TO_FACE">面交</option>
-                <option value="STORE_TO_STORE">店到店</option>
-                <option value="HOME_DELIVERY">宅配</option>
-              </select>
-            </label>
-
-            <label className="form-field">
-              <span>委託人城市 *</span>
+              <span>委託到期日 *</span>
               <input
-                type="text"
-                value={form.requesterCity}
-                onChange={(event) => updateField('requesterCity', event.target.value)}
-                placeholder="台北市"
-                required
-              />
-            </label>
-          </div>
-
-          <div className="purchase-request-two-col">
-            <label className="form-field">
-              <span>行政區</span>
-              <input
-                type="text"
-                value={form.requesterDistrict}
-                onChange={(event) => updateField('requesterDistrict', event.target.value)}
-                placeholder="中山區"
-              />
-            </label>
-
-            <label className="form-field">
-              <span>委託到期時間 *</span>
-              <input
-                type="datetime-local"
+                type="date"
+                className="local-date-input"
+                max="9999-12-31"
                 value={form.requestExpireTime}
                 onChange={(event) => updateField('requestExpireTime', event.target.value)}
                 required
               />
             </label>
-          </div>
-
-          <div className="purchase-request-two-col">
             <label className="form-field">
               <span>成立後交付時限（小時）*</span>
               <input
@@ -727,103 +862,20 @@ function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClos
                 required
               />
             </label>
-
-            <label className="form-field">
-              <span>最低信用分</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                inputMode="numeric"
-                value={form.minCreditScore}
-                onChange={(event) => updateField('minCreditScore', event.target.value)}
-                placeholder="不限"
-              />
-            </label>
           </div>
 
           <label className="form-field">
-            <span>公開交付摘要 *</span>
+            <span>最低信用分</span>
             <input
-              type="text"
-              value={form.deliveryPublicSummary}
-              onChange={(event) => updateField('deliveryPublicSummary', event.target.value)}
-              placeholder={form.deliveryMethod === 'FACE_TO_FACE' ? '例如：台北車站面交' : '例如：宅配至台北市中山區'}
-              required
+              type="number"
+              min="0"
+              max="100"
+              inputMode="numeric"
+              value={form.minCreditScore}
+              onChange={(event) => updateField('minCreditScore', event.target.value)}
+              placeholder="不限"
             />
           </label>
-
-          {form.deliveryMethod === 'FACE_TO_FACE' && (
-            <section className="delivery-profile-picker">
-              <div className="delivery-profile-picker-header">
-                <strong>常用面交資料</strong>
-                <button type="button" className="text-button" onClick={() => setIsDeliveryProfilesOpen(true)}>
-                  管理常用資料
-                </button>
-              </div>
-              {deliveryProfiles.length === 0 ? (
-                <p className="field-hint">可建立常用捷運範圍、地標或面交地點。</p>
-              ) : (
-                <div className="delivery-profile-picker-options">
-                  {deliveryProfiles.map((profile) => {
-                    const checked = form.selectedProfileIds.includes(profile.id);
-                    return (
-                      <label key={profile.id} className="market-checkbox-filter">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) =>
-                            updateField(
-                              'selectedProfileIds',
-                              event.target.checked
-                                ? [...form.selectedProfileIds, profile.id]
-                                : form.selectedProfileIds.filter((id) => String(id) !== String(profile.id))
-                            )
-                          }
-                        />
-                        <span>{profile.label || profile.displayText}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-              {deliveryProfileError && <p className="inline-error">{deliveryProfileError}</p>}
-            </section>
-          )}
-
-          {form.deliveryMethod !== 'FACE_TO_FACE' && (
-            <>
-              <div className="purchase-request-two-col">
-                <label className="form-field">
-                  <span>收件人 *</span>
-                  <input
-                    type="text"
-                    value={form.receiverName}
-                    onChange={(event) => updateField('receiverName', event.target.value)}
-                    required
-                  />
-                </label>
-                <label className="form-field">
-                  <span>收件電話 *</span>
-                  <input
-                    type="tel"
-                    value={form.receiverPhone}
-                    onChange={(event) => updateField('receiverPhone', event.target.value)}
-                    required
-                  />
-                </label>
-              </div>
-              <label className="form-field">
-                <span>{form.deliveryMethod === 'STORE_TO_STORE' ? '門市／取件資料 *' : '詳細地址 *'}</span>
-                <input
-                  type="text"
-                  value={form.addressDetail}
-                  onChange={(event) => updateField('addressDetail', event.target.value)}
-                  required
-                />
-              </label>
-            </>
-          )}
 
           <label className="form-field">
             <span>補充說明</span>
@@ -849,6 +901,7 @@ function PurchaseRequestCreateModal({ isOpen, token, isSubmitting, error, onClos
         <PurchaseDeliveryProfilesModal
           isOpen={isDeliveryProfilesOpen}
           token={token}
+          initialProfileType={form.deliveryMethod}
           onChanged={loadDeliveryProfiles}
           onClose={() => setIsDeliveryProfilesOpen(false)}
         />
@@ -1005,24 +1058,43 @@ function PurchaseRequestQuoteModal({ request, initialQuote = null, isSubmitting,
   );
 }
 
-function PurchaseRequestEditModal({ request, isSubmitting, error, onClose, onSubmit }) {
+function PurchaseRequestEditModal({ request, token, isSubmitting, error, onClose, onSubmit }) {
   const [form, setForm] = useState(() =>
     request
       ? {
       itemName: request.productName ?? '',
       itemDescription: request.description ?? '',
       fixedRewardAmount: request.fixedRewardAmount == null ? '' : String(request.fixedRewardAmount),
-      deliveryPublicSummary: request.deliveryPublicSummary ?? '',
-      requestExpireTime: request.deadlineAt ? String(request.deadlineAt).slice(0, 16) : '',
+      deliveryMethod: request.deliveryMethod || 'FACE_TO_FACE',
+      selectedProfileIds: (request.deliveryDetails ?? []).map((detail) => detail.sourceProfileId ?? detail.source_profile_id).filter(Boolean),
+      requestExpireTime: request.deadlineAt ? String(request.deadlineAt).slice(0, 10) : '',
       deliveryDeadlineHours: request.deliveryDeadlineHours == null ? '' : String(request.deliveryDeadlineHours),
       minCreditScore: request.minCreditScore == null ? '' : String(request.minCreditScore),
         }
       : null
   );
+  const [deliveryProfiles, setDeliveryProfiles] = useState([]);
+  const [profileError, setProfileError] = useState('');
+
+  useEffect(() => {
+    if (!request || !token || !form?.deliveryMethod || request.status === 'QUOTING') return undefined;
+    let cancelled = false;
+    fetchUserDeliveryProfiles(form.deliveryMethod, token)
+      .then((data) => {
+        if (!cancelled) {
+          setDeliveryProfiles(Array.isArray(data) ? data : []);
+          setProfileError('');
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) setProfileError(nextError instanceof Error ? nextError.message : '常用交付資料載入失敗');
+      });
+    return () => { cancelled = true; };
+  }, [form?.deliveryMethod, request, token]);
 
   if (!request || !form) return null;
   const deadlineOnly = request.status === 'QUOTING';
-  const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value, ...(key === 'deliveryMethod' ? { selectedProfileIds: [] } : {}) }));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1048,14 +1120,47 @@ function PurchaseRequestEditModal({ request, isSubmitting, error, onClose, onSub
               <input type="number" min="1" value={form.fixedRewardAmount} onChange={(event) => updateField('fixedRewardAmount', event.target.value)} disabled={deadlineOnly} required />
             </label>
           )}
-          <label className="form-field">
-            <span>公開交付摘要</span>
-            <input value={form.deliveryPublicSummary} onChange={(event) => updateField('deliveryPublicSummary', event.target.value)} disabled={deadlineOnly} required />
-          </label>
+          {!deadlineOnly && (
+            <>
+              <label className="form-field">
+                <span>交貨方式</span>
+                <select value={form.deliveryMethod} onChange={(event) => updateField('deliveryMethod', event.target.value)}>
+                  {Object.entries(DELIVERY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <section className="delivery-profile-picker">
+                <strong>選擇{getDeliveryLabel(form.deliveryMethod)}資料 *</strong>
+                {form.deliveryMethod === 'FACE_TO_FACE' && <p className="field-hint">面交地點可以複選。</p>}
+                {deliveryProfiles.length === 0 ? <p className="field-hint">尚未建立此類型的常用交付資料。</p> : (
+                  form.deliveryMethod === 'FACE_TO_FACE' ? (
+                    <div className="delivery-profile-picker-options">
+                      {deliveryProfiles.map((profile) => {
+                        const checked = form.selectedProfileIds.some((id) => String(id) === String(profile.id));
+                        return (
+                          <label key={profile.id} className="market-checkbox-filter">
+                            <input type="checkbox" name="edit-delivery-profile" checked={checked} onChange={(event) => updateField('selectedProfileIds', event.target.checked ? [...form.selectedProfileIds, profile.id] : form.selectedProfileIds.filter((id) => String(id) !== String(profile.id)))} />
+                            <span>{profile.label || profile.locationName || getDeliveryLabel(profile.profileType)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <DeliveryProfileSingleSelect
+                      profiles={deliveryProfiles}
+                      deliveryMethod={form.deliveryMethod}
+                      selectedProfileIds={form.selectedProfileIds}
+                      onChange={(profileId) => updateField('selectedProfileIds', [profileId])}
+                    />
+                  )
+                )}
+                {profileError && <p className="inline-error">{profileError}</p>}
+              </section>
+            </>
+          )}
           <div className="purchase-request-form-grid">
             <label className="form-field">
-              <span>委託期限</span>
-              <input type="datetime-local" value={form.requestExpireTime} onChange={(event) => updateField('requestExpireTime', event.target.value)} required />
+              <span>委託到期日</span>
+              <input type="date" className="local-date-input" max="9999-12-31" value={form.requestExpireTime} onChange={(event) => updateField('requestExpireTime', event.target.value)} required />
             </label>
             <label className="form-field">
               <span>成立後交付時數</span>
@@ -1855,12 +1960,12 @@ function PurchaseRequestsPanel({
       setCreateError('圖片最多三張');
       return;
     }
-    if (!form.requesterCity.trim() || !form.deliveryPublicSummary.trim()) {
-      setCreateError('委託城市與公開交付摘要必填');
+    if (!Array.isArray(form.selectedProfileIds) || form.selectedProfileIds.length === 0) {
+      setCreateError(`請選擇至少一筆${getDeliveryLabel(form.deliveryMethod)}資料`);
       return;
     }
     if (!form.requestExpireTime || Number(form.deliveryDeadlineHours) <= 0) {
-      setCreateError('請填寫有效的委託期限與交付時限');
+      setCreateError('請填寫有效的委託到期日與交付時限');
       return;
     }
 
@@ -1872,9 +1977,7 @@ function PurchaseRequestsPanel({
       if (form.images.length > 0 && imageUrls.length !== form.images.length) {
         throw new Error('圖片上傳結果不完整，請稍後再試。');
       }
-      const requestExpireTime = form.requestExpireTime.length === 16 ? `${form.requestExpireTime}:00` : form.requestExpireTime;
-      const isFaceToFace = form.deliveryMethod === 'FACE_TO_FACE';
-
+      const requestExpireTime = toRequestExpireDateTime(form.requestExpireTime);
       await createPurchaseRequest(
         {
           itemName: form.itemName.trim(),
@@ -1882,36 +1985,11 @@ function PurchaseRequestsPanel({
           imageUrls,
           rewardType: form.rewardType,
           fixedRewardAmount: form.rewardType === 'FIXED' ? Number(form.fixedRewardAmount) : undefined,
-          requesterCity: form.requesterCity.trim(),
-          requesterDistrict: form.requesterDistrict.trim() || undefined,
           deliveryMethod: form.deliveryMethod,
-          deliveryPublicSummary: form.deliveryPublicSummary.trim(),
-          deliveryPrivateDetail: isFaceToFace
-            ? undefined
-            : {
-                receiverName: form.receiverName.trim(),
-                receiverPhone: form.receiverPhone.trim(),
-                city: form.requesterCity.trim(),
-                district: form.requesterDistrict.trim() || undefined,
-                addressDetail: form.addressDetail.trim(),
-              },
           requestExpireTime,
           deliveryDeadlineHours: Number(form.deliveryDeadlineHours),
           minCreditScore: form.minCreditScore === '' ? 0 : Number(form.minCreditScore),
-          manualMeetupRanges: isFaceToFace
-            ? [
-                {
-                  locationType: 'CUSTOM',
-                  city: form.requesterCity.trim(),
-                  district: form.requesterDistrict.trim() || undefined,
-                  displayText: form.deliveryPublicSummary.trim(),
-                  detail: {},
-                },
-              ]
-            : undefined,
-          selectedProfileIds: isFaceToFace ? form.selectedProfileIds : undefined,
-          saveManualToProfile: false,
-          saveDeliveryToProfile: false,
+          selectedProfileIds: form.selectedProfileIds,
         },
         token
       );
@@ -2004,14 +2082,19 @@ function PurchaseRequestsPanel({
       onRequireLogin?.();
       return;
     }
-    const requestExpireTime = form.requestExpireTime.length === 16 ? `${form.requestExpireTime}:00` : form.requestExpireTime;
+    if (request.status !== 'QUOTING' && (!Array.isArray(form.selectedProfileIds) || form.selectedProfileIds.length === 0)) {
+      setEditError(`請選擇至少一筆${getDeliveryLabel(form.deliveryMethod)}資料`);
+      return;
+    }
+    const requestExpireTime = toRequestExpireDateTime(form.requestExpireTime);
     const payload = request.status === 'QUOTING'
       ? { requestExpireTime }
       : {
           itemName: form.itemName.trim(),
           itemDescription: form.itemDescription.trim() || undefined,
           fixedRewardAmount: request.rewardType === 'FIXED' ? Number(form.fixedRewardAmount) : undefined,
-          deliveryPublicSummary: form.deliveryPublicSummary.trim(),
+          deliveryMethod: form.deliveryMethod,
+          selectedProfileIds: form.selectedProfileIds,
           requestExpireTime,
           deliveryDeadlineHours: Number(form.deliveryDeadlineHours),
           minCreditScore: form.minCreditScore === '' ? 0 : Number(form.minCreditScore),
@@ -2028,6 +2111,20 @@ function PurchaseRequestsPanel({
       setEditError(nextError instanceof Error ? nextError.message : '委託更新失敗');
     } finally {
       setActionId(null);
+    }
+  };
+
+  const handleOpenEditRequest = async (request) => {
+    setEditError('');
+    if (!token) {
+      onRequireLogin?.();
+      return;
+    }
+    try {
+      const detail = await fetchPurchaseRequest(request.id, token);
+      setEditTarget(normalizePurchaseRequest({ ...request, ...detail }));
+    } catch (nextError) {
+      setEditError(nextError instanceof Error ? nextError.message : '委託詳情載入失敗');
     }
   };
 
@@ -2318,7 +2415,7 @@ function PurchaseRequestsPanel({
       return;
     }
 
-    const requestExpireTime = nextValue.length === 16 ? `${nextValue}:00` : nextValue;
+    const requestExpireTime = toRequestExpireDateTime(nextValue);
     await withAction(
       request,
       () => extendPurchaseRequest(request.id, requestExpireTime, token),
@@ -2338,7 +2435,7 @@ function PurchaseRequestsPanel({
       return;
     }
     setExtendError('');
-    setExtendDeadline(request.deadlineAt ? request.deadlineAt.slice(0, 16) : '');
+    setExtendDeadline(request.deadlineAt ? request.deadlineAt.slice(0, 10) : '');
     setActionDialogTarget({ type: 'EXTEND', request });
   };
 
@@ -2352,10 +2449,10 @@ function PurchaseRequestsPanel({
     }
     if (target.type === 'EXTEND') {
       if (!extendDeadline) {
-        setExtendError('請選擇新的委託期限。');
+        setExtendError('請選擇新的委託到期日。');
         return;
       }
-      const requestExpireTime = extendDeadline.length === 16 ? `${extendDeadline}:00` : extendDeadline;
+      const requestExpireTime = toRequestExpireDateTime(extendDeadline);
       await withAction(target.request, () => extendPurchaseRequest(target.request.id, requestExpireTime, token), '委託期限已延長。');
       setActionDialogTarget(null);
       return;
@@ -2503,10 +2600,7 @@ function PurchaseRequestsPanel({
                 setQuoteEditTarget(item);
               }}
               onWithdrawOwnQuote={handleWithdrawQuote}
-              onEditRequest={(item) => {
-                setEditError('');
-                setEditTarget(item);
-              }}
+              onEditRequest={(item) => void handleOpenEditRequest(item)}
               onManageImages={handleOpenImageOrder}
               onRequireLogin={onRequireLogin}
               onExpand={viewMode === 'compact' && !isExpandedCompactRequest ? setExpandedCompactRequestId : undefined}
@@ -2554,15 +2648,15 @@ function PurchaseRequestsPanel({
       <ActionDialog
         isOpen={Boolean(actionDialogTarget)}
         eyebrow="託購委託"
-        title={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回報價' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '刪除圖片' : '延長委託期限'}
-        description={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回後不能再次建立同一筆委託的報價。' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '確定刪除這張圖片？' : '請設定新的委託期限。'}
+        title={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回報價' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '刪除圖片' : '延長委託到期日'}
+        description={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '撤回後不能再次建立同一筆委託的報價。' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '確定刪除這張圖片？' : '請設定新的委託到期日。'}
         confirmLabel={actionDialogTarget?.type === 'WITHDRAW_QUOTE' ? '確認撤回' : actionDialogTarget?.type === 'DELETE_IMAGE' ? '確認刪除' : '確認延長'}
         confirmClassName={actionDialogTarget?.type === 'EXTEND' ? 'save-button' : 'ghost-button danger'}
         isSubmitting={Boolean(actionDialogTarget?.request) && actionId === actionDialogTarget.request.id || imageOrderState.isSaving}
         onClose={() => !imageOrderState.isSaving && setActionDialogTarget(null)}
         onConfirm={handleActionDialogConfirm}
       >
-        {actionDialogTarget?.type === 'EXTEND' && <label className="form-field"><span>新的委託期限 *</span><input type="datetime-local" value={extendDeadline} onChange={(event) => { setExtendDeadline(event.target.value); setExtendError(''); }} autoFocus />{extendError && <p className="inline-error">{extendError}</p>}</label>}
+        {actionDialogTarget?.type === 'EXTEND' && <label className="form-field"><span>新的委託到期日 *</span><input type="date" className="local-date-input" max="9999-12-31" value={extendDeadline} onChange={(event) => { setExtendDeadline(event.target.value); setExtendError(''); }} autoFocus />{extendError && <p className="inline-error">{extendError}</p>}</label>}
       </ActionDialog>
 
       <PurchaseRequestQuoteModal
@@ -2593,6 +2687,7 @@ function PurchaseRequestsPanel({
       <PurchaseRequestEditModal
         key={editTarget ? `request-edit-${editTarget.id}` : 'request-edit-closed'}
         request={editTarget}
+        token={token}
         isSubmitting={Boolean(editTarget) && actionId === editTarget.id}
         error={editError}
         onClose={() => {

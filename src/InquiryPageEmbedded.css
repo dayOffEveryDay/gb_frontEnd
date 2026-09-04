@@ -1,0 +1,447 @@
+.inquiry-page-embedded .inquiry-hero h1 {
+  color: var(--ink);
+}
+
+.inquiry-page-embedded .store-filter {
+  display: none;
+}
+
+.inquiry-page-embedded .filter-row {
+  display: block;
+}
+
+.question-type-picker {
+  display: flex;
+  gap: 10px;
+}
+
+.question-type-picker button {
+  flex: 1;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.question-type-picker button small {
+  display: none;
+}
+
+.question-type-help {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.inquiry-image-picker {
+  display: grid;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.inquiry-image-picker > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.inquiry-image-picker input[type='file'] {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.inquiry-image-previews {
+  display: grid;
+  grid-template-columns: minmax(0, 160px);
+  gap: 10px;
+}
+
+.inquiry-image-previews figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.inquiry-image-previews img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.inquiry-image-previews figcaption {
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inquiry-card-clickable {
+  position: relative;
+  cursor: pointer;
+}
+
+.inquiry-card-clickable:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 42%, transparent);
+  outline-offset: 3px;
+}
+
+.inquiry-card.has-image {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 122px;
+  align-items: center;
+  gap: 14px;
+}
+
+.inquiry-card-content {
+  min-width: 0;
+}
+
+.inquiry-card-thumbnail {
+  width: 122px;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+@media (max-width: 420px) {
+  .inquiry-card.has-image {
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 10px;
+  }
+
+  .inquiry-card-thumbnail {
+    width: 96px;
+  }
+}
+
+.inquiry-detail {
+  position: relative;
+}
+
+.inquiry-detail > .inquiry-card-top {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+}
+
+.inquiry-detail > h1 {
+  margin-top: 0;
+  padding-right: 108px;
+  color: var(--ink);
+}
+
+@media (max-width: 600px) {
+  .inquiry-detail > .inquiry-card-top {
+    top: 20px;
+    right: 20px;
+  }
+}
+
+.inquiry-detail {
+  padding: 20px;
+}
+
+.inquiry-detail > h1 {
+  font-size: clamp(1.55rem, 6.5vw, 1.9rem);
+  line-height: 1.25;
+}
+
+.detail-byline {
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.detail-facts {
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.detail-facts span {
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
+.inquiry-images {
+  margin: 16px 0;
+}
+
+.inquiry-images img {
+  width: min(190px, 100%);
+  border-radius: 10px;
+}
+
+.detail-actions {
+  margin-top: 18px;
+  padding-top: 14px;
+}
+
+.answers-section {
+  margin-top: 20px;
+}
+
+.no-answers {
+  padding: 12px;
+}
+
+.answer-form {
+  gap: 9px;
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.answer-form textarea {
+  min-height: 88px;
+}
+
+.answer-meta,
+.answer-form-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.answer-meta small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.answer-edit-button,
+.secondary-button {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 9px;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondary-button {
+  color: var(--ink-soft);
+}
+
+/* 問題詳情採用緊湊節奏，避免單一問題占滿整個手機畫面。 */
+.inquiry-detail {
+  padding: 18px;
+}
+
+.inquiry-detail > .inquiry-card-top {
+  top: 18px;
+  right: 18px;
+}
+
+.detail-byline {
+  margin-top: 6px;
+}
+
+.detail-content {
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+
+.inquiry-images {
+  display: flex;
+  justify-content: center;
+  margin: 12px 0 0;
+}
+
+.inquiry-image-button {
+  display: block;
+  width: min(270px, 75%);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.inquiry-image-button img {
+  display: block;
+  width: 100%;
+  border-radius: inherit;
+}
+
+.inquiry-image-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary) 48%, transparent);
+  outline-offset: 3px;
+}
+
+.detail-facts {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: 4px;
+  margin: 0;
+}
+
+.detail-facts span {
+  display: inline-flex;
+  min-width: 0;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.detail-facts span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail-facts i {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.detail-actions {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.detail-engagement {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.detail-expire-time {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+.answers-section {
+  margin-top: 24px;
+}
+
+.answers-section h2 {
+  margin-bottom: 10px;
+}
+
+.answer-card {
+  margin: 8px 0;
+  padding: 16px;
+}
+
+.answer-card p {
+  margin-top: 6px;
+  line-height: 1.55;
+}
+
+.answer-card-header,
+.answer-author {
+  display: flex;
+  align-items: center;
+}
+
+.answer-card-header {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.answer-author {
+  min-width: 0;
+  gap: 9px;
+}
+
+.answer-author img,
+.answer-avatar-fallback {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
+
+.answer-author img {
+  object-fit: cover;
+}
+
+.answer-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+/* Composer 預設只顯示輸入框，聚焦後才展開庫存欄位與操作按鈕。 */
+.answer-form.answer-composer {
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.answer-composer textarea {
+  min-height: 48px;
+  height: 48px;
+  padding: 11px 12px;
+  resize: none;
+}
+
+.answer-composer.is-expanded textarea {
+  min-height: 88px;
+  height: auto;
+  resize: vertical;
+}
+
+.answer-form-actions {
+  width: 100%;
+}
+
+@media (max-width: 600px) {
+  .inquiry-detail {
+    padding: 16px;
+  }
+
+  .inquiry-detail > .inquiry-card-top {
+    top: 16px;
+    right: 16px;
+  }
+
+  .inquiry-image-button {
+    width: 75%;
+  }
+
+  .detail-actions {
+    font-size: 0.76rem;
+  }
+
+  .detail-actions .follow-button {
+    padding-inline: 2px;
+    font-size: 0.76rem;
+  }
+}

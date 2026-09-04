@@ -152,20 +152,27 @@
   cursor: pointer;
 }
 
-.purchase-chat-order-title svg {
+.purchase-chat-order-link-label {
   flex: 0 0 auto;
-  width: 23px;
-  height: 23px;
-  fill: currentColor;
-  color: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 .purchase-chat-order-title:hover:not(:disabled) {
   color: var(--primary);
 }
 
-.purchase-chat-order-title:hover:not(:disabled) svg {
-  color: inherit;
+.purchase-chat-order-title:hover:not(:disabled) .purchase-chat-order-link-label {
+  background: color-mix(in srgb, var(--primary) 84%, var(--ink) 16%);
+  color: var(--primary-contrast);
 }
 
 .purchase-chat-order-title:focus-visible {
@@ -377,6 +384,13 @@
   margin-top: 18px;
 }
 
+.delivery-profile-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
 .purchase-order-events article,
 .purchase-received-review-list article,
 .delivery-profile-row {
@@ -395,16 +409,85 @@
 }
 
 .delivery-profile-row {
-  grid-template-columns: 1fr auto;
+  position: relative;
+  grid-template-columns: 1fr;
   align-items: center;
+  min-height: 76px;
+  padding-right: 92px;
 }
 
-.delivery-profile-row > div:first-child,
+.delivery-profile-row > div:first-child {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.delivery-profile-row > div:first-child strong,
+.delivery-profile-row > div:first-child span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .purchase-received-review-list article > div {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 8px;
+}
+
+.delivery-profile-row-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.delivery-profile-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface-alt);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.delivery-profile-icon-button:hover:not(:disabled),
+.delivery-profile-icon-button:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--line));
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-alt));
+  color: var(--primary);
+}
+
+.delivery-profile-icon-button.danger:hover:not(:disabled),
+.delivery-profile-icon-button.danger:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-alt));
+  color: var(--accent);
+}
+
+.delivery-profile-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.delivery-profile-icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .delivery-profile-form,
@@ -426,6 +509,144 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+.delivery-profile-combobox {
+  position: relative;
+  margin-top: 10px;
+}
+
+.delivery-profile-combobox-trigger {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.delivery-profile-combobox-trigger:hover,
+.delivery-profile-combobox-trigger.open,
+.delivery-profile-combobox-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 66%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+  outline: none;
+}
+
+.delivery-profile-combobox-trigger > svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.16s ease;
+}
+
+.delivery-profile-combobox-trigger.open > svg {
+  transform: rotate(180deg);
+}
+
+.delivery-profile-combobox-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.delivery-profile-combobox-copy strong,
+.delivery-profile-combobox-copy small {
+  overflow-wrap: anywhere;
+}
+
+.delivery-profile-combobox-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.delivery-profile-combobox-copy small {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.delivery-profile-combobox-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+  box-shadow: 0 18px 42px rgba(2, 9, 22, 0.28);
+  overscroll-behavior: contain;
+}
+
+.delivery-profile-combobox-option {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.delivery-profile-combobox-option:hover,
+.delivery-profile-combobox-option:focus-visible {
+  background: var(--surface-alt);
+  outline: none;
+}
+
+.delivery-profile-combobox-option.selected {
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface-alt));
+}
+
+.delivery-profile-combobox-check {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  opacity: 0;
+}
+
+.delivery-profile-combobox-option.selected .delivery-profile-combobox-check {
+  opacity: 1;
 }
 
 .image-gallery-upload-button {
@@ -2298,6 +2519,34 @@
   border-top: 1px solid var(--line-soft);
 }
 
+.profile-address-settings {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.profile-address-settings > div {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-address-settings strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.profile-address-settings span {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.profile-address-settings .secondary-button {
+  width: 100%;
+}
+
 .profile-field {
   display: grid;
   gap: 8px;
@@ -2656,6 +2905,28 @@
 .form-field textarea:focus {
   border-color: color-mix(in srgb, var(--primary) 62%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.form-field .local-date-input {
+  min-width: 0;
+  direction: ltr;
+  text-align: left;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.form-field .local-date-input::-webkit-datetime-edit {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+}
+
+.form-field .local-date-input::-webkit-datetime-edit-fields-wrapper {
+  min-width: 0;
 }
 
 .form-field small,
@@ -6450,6 +6721,16 @@
   .deal-card-with-actions .deal-actions .join-campaign-button {
     width: auto;
   }
+}
+
+.chat-readonly-notice {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  color: var(--muted);
+  background: var(--surface-strong);
+  text-align: center;
+  font-weight: 700;
 }
 
 @media (max-width: 699px) {

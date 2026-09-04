@@ -19,7 +19,7 @@ function formatNotificationTime(value) {
 }
 
 function getNotificationAction(notification, isReadTab) {
-  const canOpenChat = notification.type === 'CAMPAIGN_FULL' && notification.referenceId != null;
+  const canOpenCampaignOrder = notification.type === 'CAMPAIGN_FULL' && notification.referenceId != null;
   const canOpenReview = notification.type === 'CAMPAIGN_COMPLETED' && notification.referenceId != null;
   const canOpenPurchaseChat =
     notification.referenceId != null &&
@@ -39,16 +39,18 @@ function getNotificationAction(notification, isReadTab) {
       'PURCHASE_ABNORMAL_TIMEOUT',
       'PURCHASE_CONFIRMATION_TIMEOUT',
     ].includes(notification.type);
-  const hasAction = canOpenChat || canOpenReview || canOpenPurchaseChat;
+  const canOpenInquiry = notification.referenceId != null && ['INQUIRY_NEW_ANSWER', 'INQUIRY_EXPIRED_NO_ANSWER'].includes(notification.type);
+  const hasAction = canOpenCampaignOrder || canOpenReview || canOpenPurchaseChat || canOpenInquiry;
 
   if (!hasAction && isReadTab) {
     return null;
   }
 
   return {
-    canOpenChat,
+    canOpenCampaignOrder,
     canOpenReview,
     canOpenPurchaseChat,
+    canOpenInquiry,
     hasAction,
     label: hasAction ? '前往' : '標為已讀',
   };

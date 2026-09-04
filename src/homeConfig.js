@@ -9,7 +9,6 @@ export const LABELS = {
   account: '帳號',
   logout: '登出',
   memberInfo: '會員資料',
-  membershipCard: 'Costco 會員卡',
   displayName: '顯示名稱',
   loginWithLine: 'LINE 登入',
   loginPromptTitle: '登入後即可管理個人資料與發起團購',

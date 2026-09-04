@@ -20,7 +20,6 @@ function normalizeUser(user) {
     id: user.id ?? null,
     displayName: user.displayName ?? '未命名使用者',
     profileImageUrl: user.profileImageUrl ?? '',
-    hasCostcoMembership: Boolean(user.hasCostcoMembership),
   };
 }
 

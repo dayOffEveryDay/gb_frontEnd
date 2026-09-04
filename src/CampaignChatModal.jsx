@@ -263,11 +263,16 @@ function CampaignChatModal({
   const campaignStatus = getCampaignStatus(campaign);
   const campaignCompletedAt = getCampaignCompletedAt(campaign);
   const campaignChatExpiresAt = getCampaignChatExpiresAt(campaign);
+  const chatAccess = (campaign?.chatAccess ?? campaign?.chat_access ?? '').toString().trim().toUpperCase();
+  const isCancelledOrArchived = ['CANCELLED', 'CANCELED', 'ARCHIVED', 'HOST_NO_SHOW'].some((status) =>
+    campaignStatus.includes(status)
+  );
   const shouldStopChat =
     hasExplicitStoppedChat(campaign) ||
     isPastChatExpiresAt(campaignChatExpiresAt) ||
     isCompletedChatExpiredByFields(campaignStatus, campaignCompletedAt);
-  const showCompletedChatNotice = campaignStatus === 'COMPLETED' && !shouldStopChat;
+  const isReadOnly = chatAccess === 'READ_ONLY' || isCancelledOrArchived || shouldStopChat;
+  const showCompletedChatNotice = campaignStatus === 'COMPLETED' && !isReadOnly;
   const participantStatus = (
     campaign?.myParticipantStatus ??
     campaign?.my_participant_status ??
@@ -316,8 +321,8 @@ function CampaignChatModal({
   }, [campaignId, isOpen]);
 
   useEffect(() => {
-    setIsChatStopped(shouldStopChat);
-  }, [shouldStopChat]);
+    setIsChatStopped(isReadOnly);
+  }, [isReadOnly]);
 
   useEffect(() => {
     if (!isOpen || !token) {
@@ -348,7 +353,7 @@ function CampaignChatModal({
       })
       .catch((nextError) => {
         if (!cancelled) {
-          if (shouldStopChat) {
+          if (isReadOnly) {
             setIsChatStopped(true);
             setMessages([]);
             return;
@@ -362,14 +367,14 @@ function CampaignChatModal({
     return () => {
       cancelled = true;
     };
-  }, [campaignId, isOpen, onMarkRead, shouldStopChat, token]);
+  }, [campaignId, isOpen, isReadOnly, onMarkRead, token]);
 
   useEffect(() => {
     if (!isOpen || !token || !isUsableCampaignId(campaignId)) {
       return undefined;
     }
 
-    if (shouldStopChat) {
+    if (isReadOnly || chatAccess !== 'READ_WRITE') {
       setIsChatStopped(true);
       setIsConnected(false);
       return undefined;
@@ -456,7 +461,7 @@ function CampaignChatModal({
       clientRef.current?.deactivate();
       clientRef.current = null;
     };
-  }, [campaignId, campaignStatus, isOpen, onCampaignStatusChange, onMarkRead, shouldStopChat, token, wsUrl]);
+  }, [campaignId, campaignStatus, chatAccess, isOpen, isReadOnly, onCampaignStatusChange, onMarkRead, token, wsUrl]);
 
   useEffect(() => {
     if (bodyRef.current) {
@@ -569,6 +574,10 @@ function CampaignChatModal({
   };
 
   const publishChatContent = (content) => {
+    if (isReadOnly || chatAccess !== 'READ_WRITE') {
+      return false;
+    }
+
     if (!clientRef.current?.connected) {
       setError('聊天室尚未連線，請稍後再試');
       return false;
@@ -586,7 +595,7 @@ function CampaignChatModal({
   };
 
   const handleSend = async () => {
-    if (isChatStopped || isUploadingImages) {
+    if (isReadOnly || isChatStopped || isUploadingImages) {
       return;
     }
 
@@ -617,7 +626,7 @@ function CampaignChatModal({
   };
 
   const handlePickImages = () => {
-    if (isChatStopped || isUploadingImages) {
+    if (isReadOnly || isChatStopped || isUploadingImages) {
       return;
     }
 
@@ -628,7 +637,7 @@ function CampaignChatModal({
     const selectedFiles = Array.from(event.target.files ?? []).filter(isImageFile);
     event.target.value = '';
 
-    if (isChatStopped || isUploadingImages || selectedFiles.length === 0) {
+    if (isReadOnly || isChatStopped || isUploadingImages || selectedFiles.length === 0) {
       return;
     }
 
@@ -721,7 +730,7 @@ function CampaignChatModal({
         </div>
 
         <div className="chat-status-row">
-          <span>{isConnected ? '已連線' : '連線中'}</span>
+          <span>{isReadOnly ? '唯讀' : isConnected ? '已連線' : '連線中'}</span>
 
           <div className="chat-status-actions">
             {canDeliverCampaign ? (
@@ -904,41 +913,47 @@ function CampaignChatModal({
         {statusMessage && <p className="inline-warning">{statusMessage}</p>}
         {error && <p className="inline-error">{error}</p>}
 
-        <div className="chat-composer">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="chat-file-input"
-            disabled={isChatStopped || isUploadingImages}
-            onChange={handleUploadImages}
-          />
-          <button
-            type="button"
-            className="chat-attachment-button"
-            onClick={handlePickImages}
-            disabled={isChatStopped || isUploadingImages}
-          >
-            {isUploadingImages ? '上傳中' : '圖片'}
-          </button>
-          <input
-            type="text"
-            value={draft}
-            placeholder={isChatStopped ? '聊天室已停止連線' : '輸入訊息'}
-            disabled={isChatStopped || isUploadingImages}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                handleSend();
-              }
-            }}
-          />
-          <button type="button" className="text-button" onClick={handleSend} disabled={isChatStopped || isUploadingImages}>
-            送出
-          </button>
-        </div>
+        {isReadOnly ? (
+          <div className="chat-readonly-notice" role="status">
+            此聊天室目前為唯讀，仍可查看過往訊息。
+          </div>
+        ) : (
+          <div className="chat-composer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="chat-file-input"
+              disabled={isChatStopped || isUploadingImages}
+              onChange={handleUploadImages}
+            />
+            <button
+              type="button"
+              className="chat-attachment-button"
+              onClick={handlePickImages}
+              disabled={isChatStopped || isUploadingImages}
+            >
+              {isUploadingImages ? '上傳中' : '圖片'}
+            </button>
+            <input
+              type="text"
+              value={draft}
+              placeholder="輸入訊息"
+              disabled={isChatStopped || isUploadingImages}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  handleSend();
+                }
+              }}
+            />
+            <button type="button" className="text-button" onClick={handleSend} disabled={isChatStopped || isUploadingImages}>
+              送出
+            </button>
+          </div>
+        )}
 
         <ImageGalleryModal
           isOpen={imageGalleryState.isOpen}

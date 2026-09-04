@@ -172,16 +172,18 @@ function ParticipationActionModal({
         </div>
         <div className="modal-title-row">
           <h2 className="modal-title">{campaign.itemName}</h2>
-          <button
-            type="button"
-            className="small-icon-button"
-            onClick={() => onOpenChat?.(campaign)}
-            disabled={!canOpenChat || isSubmitting}
-            title={canOpenChat ? '\u524d\u5f80\u804a\u5929\u5ba4' : '\u672a\u6eff\u55ae\u7121\u6cd5\u958b\u555f\u804a\u5929\u5ba4'}
-            aria-label={'\u524d\u5f80\u804a\u5929\u5ba4'}
-          >
-            <ChatRoomsIcon />
-          </button>
+          {canOpenChat && (
+            <button
+              type="button"
+              className="small-icon-button"
+              onClick={() => onOpenChat?.(campaign)}
+              disabled={isSubmitting}
+              title={'\u524d\u5f80\u804a\u5929\u5ba4'}
+              aria-label={'\u524d\u5f80\u804a\u5929\u5ba4'}
+            >
+              <ChatRoomsIcon />
+            </button>
+          )}
         </div>
 
         {isHostMode ? (

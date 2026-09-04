@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --configLoader native",
     "build": "vite build --configLoader native",
+    "build:local": "vite build --mode development --configLoader native",
+    "build:prod": "vite build --mode production --configLoader native",
     "lint": "eslint .",
     "preview": "vite preview --configLoader native"
   },
