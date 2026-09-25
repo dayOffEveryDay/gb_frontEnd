@@ -6408,6 +6408,12 @@
 }
 
 @media (min-width: 700px) {
+  .app-shell {
+    /* 桌面版維持平板直立的閱讀寬度，保留兩側留白。 */
+    max-width: 768px;
+    border-inline: 2px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  }
+
   .topbar {
     grid-template-columns: 48px minmax(0, 1fr) auto;
     gap: 18px;
@@ -6603,7 +6609,7 @@
   .bottom-bar {
     left: 50%;
     right: auto;
-    width: min(1120px, calc(100vw - 24px));
+    width: min(744px, calc(100vw - 24px));
     bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     padding: 12px;
     border-radius: 26px;
@@ -6611,7 +6617,7 @@
   }
 
   .floating-view-control {
-    right: max(24px, calc((100vw - 1120px) / 2 + 24px));
+    right: max(24px, calc((100vw - 744px) / 2 + 24px));
     bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   }
 
@@ -6620,106 +6626,6 @@
     padding: 14px 20px;
     border-radius: 18px;
     font-size: 15px;
-  }
-}
-
-@media (min-width: 1400px) {
-  .deal-card {
-    grid-template-columns: minmax(220px, 0.9fr) minmax(220px, 1fr) minmax(178px, 0.7fr);
-    grid-template-areas:
-      "image body details"
-      "image body actions";
-    align-items: stretch;
-    gap: 14px;
-    padding: 14px;
-  }
-
-  .deal-upper {
-    display: contents;
-  }
-
-  .deal-image-wrap {
-    grid-area: image;
-    height: 100%;
-    min-height: 220px;
-  }
-
-  .deal-body {
-    grid-area: body;
-    align-self: start;
-  }
-
-  .deal-lower {
-    grid-area: details;
-    align-self: start;
-    grid-template-columns: 1fr;
-    padding-top: 0;
-    border-top: none;
-    row-gap: 10px;
-  }
-
-  .host-item,
-  .footer-item.place {
-    grid-column: 1;
-  }
-
-  .deal-actions {
-    grid-area: actions;
-    align-self: end;
-  }
-
-  .deal-actions .join-campaign-button {
-    width: 100%;
-  }
-
-  .deal-card-with-actions {
-    grid-template-columns: 1fr;
-    grid-template-areas: none;
-  }
-
-  .deal-card-with-actions .deal-upper {
-    display: grid;
-    grid-template-columns: minmax(220px, 0.92fr) minmax(260px, 1.08fr);
-    align-items: start;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-
-  .deal-card-with-actions .deal-image-wrap {
-    grid-area: auto;
-    height: auto;
-    min-height: 0;
-    aspect-ratio: 4 / 3;
-  }
-
-  .deal-card-with-actions .deal-body {
-    grid-area: auto;
-  }
-
-  .deal-card-with-actions .deal-lower {
-    grid-area: auto;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-    padding-top: 12px;
-    border-top: none;
-    row-gap: 8px;
-  }
-
-  .deal-card-with-actions .footer-item.place {
-    grid-column: 1 / 2;
-  }
-
-  .deal-card-with-actions .deal-actions {
-    grid-area: auto;
-    grid-column: 2 / 3;
-    align-self: center;
-    justify-self: start;
-    justify-content: flex-start;
-    padding-top: 0;
-    border-top: none;
-  }
-
-  .deal-card-with-actions .deal-actions .join-campaign-button {
-    width: auto;
   }
 }
 
