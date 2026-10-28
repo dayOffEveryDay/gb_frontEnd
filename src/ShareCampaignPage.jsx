@@ -6,9 +6,9 @@ import {
   getStoredToken,
   joinCampaign,
 } from './api';
-import DealCard from './DealCard';
-import ImageGalleryModal from './ImageGalleryModal';
-import JoinCampaignModal from './JoinCampaignModal';
+import DealCard from './components/campaign/DealCard';
+import ImageGalleryModal from './components/media/ImageGalleryModal';
+import JoinCampaignModal from './components/campaign/JoinCampaignModal';
 import { LABELS } from './homeConfig';
 import {
   formatCountdown,

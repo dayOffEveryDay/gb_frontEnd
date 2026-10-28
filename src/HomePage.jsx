@@ -1,20 +1,65 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import usePageScroll from './layouts/usePageScroll';
+import { mainPath } from './layouts/mainRoutes';
+import useReferenceData from './layouts/useReferenceData';
+import useCampaignGallery from './pages/mine/useCampaignGallery';
+import useMainNavigation from './layouts/useMainNavigation';
+import useMainLayoutState from './layouts/useMainLayoutState';
+import useCampaignsFeed from './pages/campaigns/useCampaignsFeed';
+import useMineCampaigns from './pages/mine/useMineCampaigns';
+import useParticipationActions from './pages/mine/useParticipationActions';
+import useCampaignActions from './pages/campaigns/useCampaignActions';
+import useInquiriesPage from './pages/inquiries/useInquiriesPage';
+import useRequestsPage from './pages/requests/useRequestsPage';
+import useMinePageState from './pages/mine/useMinePageState';
+import useCampaignsPageState from './pages/campaigns/useCampaignsPageState';
+import {
+  CHAT_ROOMS_LOAD_ERROR_MESSAGE,
+  CHAT_ROOM_UNAVAILABLE_MESSAGE,
+  NOTIFICATION_SOUND_ENABLED_KEY,
+  CHAT_ROOM_PAGE_SIZE,
+  getStoredChatRoomLastReads,
+  setStoredChatRoomLastReads,
+  normalizeReadTimestamp,
+  countUnreadChatMessages,
+  mapWithConcurrency,
+  getInitialNotificationSoundEnabled,
+  unlockNotificationAudio,
+  playNotificationSound,
+  areUsersEquivalent,
+  normalizeNotification,
+  getLiveNotificationKey,
+  normalizeNotificationList,
+  buildHostParticipationCampaign,
+  getCampaignChatAccess,
+  canOpenCampaignChat,
+  getNormalizedCampaignId,
+  getCampaignDisplayName,
+  hasUsableCampaignId,
+  canListCampaignChatRoom,
+  buildOpenChatRooms,
+  normalizePurchaseChatRoom,
+  getCombinedChatRoomSortTime,
+  isSameUserId,
+  canReorderCampaignImages,
+  isFullCampaignNotification,
+  isReviewCampaignNotification,
+  isPurchaseChatNotification,
+  isPurchaseOrderNotification,
+  isInquiryNotification,
+  PROFILE_RETURN_CONTEXT_KEY,
+} from './homeHelpers';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import './App.css';
+import MainLayout from './layouts/MainLayout';
 import {
   AUTH_EXPIRED_MESSAGE,
   AUTH_STORAGE_EVENT,
-  cancelCampaign,
-  checkReviewStatus,
-  confirmCampaignReceipt,
   clearStoredAuth,
-  createCampaign,
-  deliverCampaign,
   devLogin,
-  fetchCampaigns,
   fetchCampaignChatMessages,
-  fetchCategories,
   fetchHostDashboard,
   fetchMyHostedCampaigns,
   fetchMyJoinedCampaigns,
@@ -22,1085 +67,136 @@ import {
   fetchPurchaseChatRooms,
   fetchPurchaseChatUnreadCount,
   fetchReadNotifications,
-  fetchStores,
   fetchUnreadNotifications,
   getFrontendBaseUrl,
   getBackendBaseUrl,
   isDevLoginEnabled,
   getStoredToken,
   getStoredUser,
-  hostReviseCampaign,
-  joinCampaign,
-  kickCampaignParticipant,
   LINE_LOGIN_SUCCESS_MESSAGE,
-  markParticipantNoShow,
   markNotificationRead,
   markPurchaseChatRoomRead,
   openLineLoginPopup,
-  raiseCampaignDispute,
-  reviseCampaign,
   setStoredAuth,
-  unlockCampaignRevision,
-  updateCampaignImageOrder,
-  withdrawCampaign,
   updateCurrentUserProfile,
 } from './api';
 import { hasCompletedOnboarding } from './onboardingUtils';
-import { EXPIRE_PRESET_OPTIONS, LABELS, PAGE_SIZE, TYPE_OPTIONS } from './homeConfig';
-import {
-  formatCountdown,
-  formatDateTime,
-  getCampaignImageOrderName,
-  getSuggestedMeetupTime,
-  getInitialCampaignForm,
-  getScenarioLabel,
-  getTypeClass,
-  isHoduoClosingSoon,
-  isWithinHoduoBusinessHours,
-  mapCampaign,
-  normalizeUser,
-  parseLocalDateTime,
-  resolveExpireDate,
-  resolveExpireTime,
-} from './homeUtils';
-import HomeTopBar from './HomeTopBar';
-import LoginModal from './LoginModal';
-import ProfileModal from './ProfileModal';
-import ChatRoomsModal from './ChatRoomsModal';
-import NotificationsModal from './NotificationsModal';
-import CreateCampaignModal from './CreateCampaignModal';
-import CreateCampaignSuccessModal from './CreateCampaignSuccessModal';
-import JoinCampaignModal from './JoinCampaignModal';
-import DealCard from './DealCard';
-import ImageGalleryModal from './ImageGalleryModal';
-import CampaignChatModal from './CampaignChatModal';
-import PurchaseChatModal from './PurchaseChatModal';
-import PurchaseOrderModal from './PurchaseOrderModal';
-import ParticipationActionModal from './ParticipationActionModal';
-import ReviewModal from './ReviewModal';
-import PurchaseRequestsPanel, { MY_PURCHASE_REQUEST_SCOPE_OPTIONS } from './PurchaseRequestsPanel';
-import { InquiryPanel } from './InquiryPage';
-import { shareCampaign } from './shareUtils';
-import {
-  AvatarIcon,
-  BulbIcon,
-  CardViewIcon,
-  CartHandshakeIcon,
-  CompactViewIcon,
-  DiagonalExpandIcon,
-  MyDealsIcon,
-  SearchIcon,
-} from './Icons';
+import { LABELS, TYPE_OPTIONS } from './homeConfig';
+import { formatDateTime, getScenarioLabel, mapCampaign, normalizeUser } from './homeUtils';
+
+import LoginModal from './components/account/LoginModal';
+import ProfileModal from './components/account/ProfileModal';
+import ChatRoomsModal from './components/chat/ChatRoomsModal';
+import NotificationsModal from './components/feedback/NotificationsModal';
+import CreateCampaignModal from './components/campaign/CreateCampaignModal';
+import CreateCampaignSuccessModal from './components/campaign/CreateCampaignSuccessModal';
+import JoinCampaignModal from './components/campaign/JoinCampaignModal';
+
+import ImageGalleryModal from './components/media/ImageGalleryModal';
+import CampaignChatModal from './components/chat/CampaignChatModal';
+import PurchaseChatModal from './components/chat/PurchaseChatModal';
+import PurchaseOrderModal from './components/purchase/PurchaseOrderModal';
+import ParticipationActionModal from './components/campaign/ParticipationActionModal';
+import ReviewModal from './components/campaign/ReviewModal';
 
-const CHAT_ROOMS_LOAD_ERROR_MESSAGE = '部分聊天室資料異常，暫時無法完整載入。請稍後再試，或從通知／我的團購開啟聊天室。';
-const CHAT_ROOM_UNAVAILABLE_MESSAGE = '這筆聊天室資料異常或已不存在，暫時無法開啟。';
-
-const MINE_CAMPAIGN_BUCKET_LABELS = {
-  ACTIVE: '進行中',
-  COMPLETED: '已完成',
-  FAILED: '失敗',
-  ISSUE: '異常',
-  CANCELLED: '已取消',
-};
-
-const MARKET_STATUS_OPTIONS = [
-  { value: 'ALL', label: '全部' },
-  { value: 'OPEN', label: '可跟' },
-];
-
-const DEAL_VIEW_MODE_KEYS = {
-  market: 'deal_view_mode_market',
-  mine: 'deal_view_mode_mine',
-  request: 'deal_view_mode_request',
-  mobile: 'deal_view_mode_mobile',
-};
-const MARKET_HIDE_FULL_KEY = 'market_hide_full';
-const NOTIFICATION_SOUND_ENABLED_KEY = 'notification_sound_enabled';
-const CHAT_ROOM_PAGE_SIZE = 100;
-const CHAT_ROOM_LAST_READ_KEY_PREFIX = 'chat_room_last_read';
-
-function getChatRoomLastReadStorageKey(userId) {
-  return `${CHAT_ROOM_LAST_READ_KEY_PREFIX}:${userId ?? 'guest'}`;
-}
-
-function getStoredChatRoomLastReads(userId) {
-  if (!userId) {
-    return {};
-  }
-
-  const storageKey = getChatRoomLastReadStorageKey(userId);
-  const raw = localStorage.getItem(storageKey);
-
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    localStorage.removeItem(storageKey);
-    return {};
-  }
-}
-
-function setStoredChatRoomLastReads(userId, nextState) {
-  if (!userId) {
-    return;
-  }
-
-  const storageKey = getChatRoomLastReadStorageKey(userId);
-  const normalizedEntries = Object.entries(nextState ?? {}).filter(([, value]) => typeof value === 'string' && value);
-
-  if (normalizedEntries.length === 0) {
-    localStorage.removeItem(storageKey);
-    return;
-  }
-
-  localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(normalizedEntries)));
-}
-
-function getChatMessageTimestampValue(message) {
-  return message?.timestamp ?? message?.createdAt ?? message?.created_at ?? '';
-}
-
-function getComparableTime(value) {
-  const date = parseLocalDateTime(value);
-  return date ? date.getTime() : 0;
-}
-
-function normalizeReadTimestamp(currentValue, nextValue) {
-  const currentTime = getComparableTime(currentValue);
-  const nextTime = getComparableTime(nextValue) || Date.now();
-  return nextTime >= currentTime ? new Date(nextTime).toISOString() : currentValue;
-}
-
-function countUnreadChatMessages(messages, currentUserId, lastReadAt = '') {
-  const lastReadTime = getComparableTime(lastReadAt);
-
-  return (Array.isArray(messages) ? messages : []).reduce((count, message) => {
-    const messageType = (message?.type ?? message?.messageType ?? message?.message_type ?? '')
-      .toString()
-      .toUpperCase();
-
-    if (messageType === 'SYSTEM') {
-      return count;
-    }
-
-    if (isSameUserId(message?.senderId ?? message?.sender_id, currentUserId)) {
-      return count;
-    }
-
-    const messageTime = getComparableTime(getChatMessageTimestampValue(message));
-    if (!messageTime) {
-      return lastReadTime === 0 ? count + 1 : count;
-    }
-
-    return messageTime > lastReadTime ? count + 1 : count;
-  }, 0);
-}
-
-async function mapWithConcurrency(items, concurrency, mapper) {
-  const results = new Array(items.length);
-  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
-  let nextIndex = 0;
-
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
-      }
-    })
-  );
-
-  return results;
-}
-
-function getInitialMarketHideFullEnabled() {
-  return localStorage.getItem(MARKET_HIDE_FULL_KEY) === 'true';
-}
-
-function getInitialNotificationSoundEnabled() {
-  return localStorage.getItem(NOTIFICATION_SOUND_ENABLED_KEY) !== 'false';
-}
-
-function getStoredDealViewModePreference(scope) {
-  const savedMode = localStorage.getItem(DEAL_VIEW_MODE_KEYS[scope]);
-  return savedMode === 'card' || savedMode === 'compact' ? savedMode : '';
-}
-
-function getInitialDealViewModePreferences() {
-  return {
-    market: getStoredDealViewModePreference('market'),
-    mine: getStoredDealViewModePreference('mine'),
-    request: getStoredDealViewModePreference('request'),
-    mobile: getStoredDealViewModePreference('mobile'),
-  };
-}
-
-function getAudioContextConstructor() {
-  return window.AudioContext ?? window.webkitAudioContext ?? null;
-}
-
-function getNotificationAudioContext(audioContextRef) {
-  const AudioContextConstructor = getAudioContextConstructor();
-
-  if (!AudioContextConstructor) {
-    return null;
-  }
-
-  if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-    audioContextRef.current = new AudioContextConstructor();
-  }
-
-  return audioContextRef.current;
-}
-
-async function unlockNotificationAudio(audioContextRef) {
-  const audioContext = getNotificationAudioContext(audioContextRef);
-
-  if (!audioContext || audioContext.state !== 'suspended') {
-    return;
-  }
-
-  try {
-    await audioContext.resume();
-  } catch {
-    // Browser audio policies can block unlock until a direct user gesture.
-  }
-}
-
-async function playNotificationSound(audioContextRef) {
-  const audioContext = getNotificationAudioContext(audioContextRef);
-
-  if (!audioContext) {
-    return;
-  }
-
-  if (audioContext.state === 'suspended') {
-    await unlockNotificationAudio(audioContextRef);
-  }
-
-  if (audioContext.state !== 'running') {
-    return;
-  }
-
-  const startAt = audioContext.currentTime;
-  const gain = audioContext.createGain();
-  gain.gain.setValueAtTime(0.0001, startAt);
-  gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.34);
-  gain.connect(audioContext.destination);
-
-  [660, 880].forEach((frequency, index) => {
-    const oscillator = audioContext.createOscillator();
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(frequency, startAt);
-    oscillator.connect(gain);
-    oscillator.start(startAt + index * 0.11);
-    oscillator.stop(startAt + 0.18 + index * 0.11);
-  });
-}
-
-function getDealViewKey(deal, index = 0) {
-  return String(
-    deal?.id ??
-      deal?.campaignId ??
-      `${deal?.mineSource ?? 'campaign'}-${deal?.itemName ?? 'item'}-${deal?.expireTime ?? index}`
-  );
-}
-
-function areUsersEquivalent(left, right) {
-  if (left === right) {
-    return true;
-  }
-
-  if (!left && !right) {
-    return true;
-  }
-
-  if (!left || !right) {
-    return false;
-  }
-
-  return (
-    String(left.id ?? '') === String(right.id ?? '') &&
-    (left.displayName ?? '') === (right.displayName ?? '') &&
-    (left.profileImageUrl ?? '') === (right.profileImageUrl ?? '')
-  );
-}
-
-function CompactDealRow({
-  deal,
-  index,
-  labels,
-  countdownNow,
-  formatCountdown,
-  formatDateTime,
-  getScenarioLabel,
-  getTypeClass,
-  isHighlighted,
-  onExpand,
-  onOpenGallery,
-  onOpenUserProfile,
-}) {
-  const viewKey = getDealViewKey(deal, index);
-  const hostName = deal.host?.displayName ?? labels.noValue;
-  const deadlineValue = deal.expireTime ?? deal.meetupTime;
-
-  return (
-    <article className={isHighlighted ? 'compact-market-row compact-market-row-highlighted' : 'compact-market-row'}>
-      <button
-        type="button"
-        className="compact-market-image-button"
-        onClick={() => onOpenGallery?.(deal, 0)}
-        aria-label={`查看 ${deal.itemName} 圖片`}
-      >
-        <img src={deal.image} alt={deal.itemName} className="compact-market-image" />
-      </button>
-
-      <div className="compact-market-main">
-        <div className="compact-market-title-row">
-          <strong className="compact-market-title">{deal.itemName}</strong>
-          <span className={`compact-market-type ${getTypeClass(deal.scenarioType)}`}>
-            {getScenarioLabel(deal.scenarioType)}
-          </span>
-        </div>
-        <div className="compact-market-meta">
-          <span>NT$ {deal.pricePerUnit}</span>
-          <span>剩 {deal.availableQuantity} 件</span>
-          <span>{deal.storeName || labels.noValue}</span>
-        </div>
-        <div className="compact-market-bottom">
-          <button
-            type="button"
-            className="compact-market-host"
-            onClick={() =>
-              onOpenUserProfile?.({
-                id: deal.host?.id,
-                displayName: deal.host?.displayName,
-                profileImageUrl: deal.host?.profileImageUrl,
-                creditScore: deal.host?.creditScore,
-              })
-            }
-            disabled={!deal.host?.id || !onOpenUserProfile}
-            aria-label={`查看 ${hostName} 的個人資料`}
-            title="查看個人資料"
-          >
-            <span className="compact-host-avatar">
-              {deal.host?.profileImageUrl ? (
-                <img src={deal.host.profileImageUrl} alt="" className="avatar-image" />
-              ) : (
-                <AvatarIcon />
-              )}
-            </span>
-            <span>{hostName}</span>
-          </button>
-          <span className="compact-market-deadline">
-            <span className="compact-market-countdown">{formatCountdown(deadlineValue, countdownNow)}</span>
-            <span>{formatDateTime(deadlineValue)}</span>
-          </span>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        className="compact-expand-button"
-        onClick={() => onExpand(viewKey)}
-        aria-label={`放大 ${deal.itemName} 團購卡片`}
-        title="放大"
-      >
-        <DiagonalExpandIcon />
-      </button>
-    </article>
-  );
-}
-
-function CompactMineDealRow({ deal, index, labels, isHighlighted, onExpand, onOpenGallery, onOpenUserProfile }) {
-  const statusBucket = getMineCampaignBucket(deal);
-  const statusLabel = MINE_CAMPAIGN_BUCKET_LABELS[statusBucket] ?? statusBucket;
-  const viewKey = getDealViewKey(deal, index);
-  const hostName = deal.host?.displayName ?? labels.noValue;
-
-  return (
-    <article className={isHighlighted ? 'compact-deal-row compact-deal-row-highlighted' : 'compact-deal-row'}>
-      <button
-        type="button"
-        className="compact-deal-image-button"
-        onClick={() => onOpenGallery?.(deal, 0)}
-        aria-label={`查看 ${deal.itemName} 圖片`}
-      >
-        <img src={deal.image} alt={deal.itemName} className="compact-deal-image" />
-      </button>
-
-      <div className="compact-deal-main">
-        <strong className="compact-deal-title">{deal.itemName}</strong>
-        <div className="compact-deal-host">
-          <button
-            type="button"
-            className="compact-host-avatar"
-            onClick={() =>
-              onOpenUserProfile?.({
-                id: deal.host?.id,
-                displayName: deal.host?.displayName,
-                profileImageUrl: deal.host?.profileImageUrl,
-                creditScore: deal.host?.creditScore,
-              })
-            }
-            disabled={!deal.host?.id || !onOpenUserProfile}
-            aria-label={`查看 ${hostName} 的個人資料`}
-            title="查看個人資料"
-          >
-            {deal.host?.profileImageUrl ? (
-              <img src={deal.host.profileImageUrl} alt="" className="avatar-image" />
-            ) : (
-              <AvatarIcon />
-            )}
-          </button>
-          <span>{hostName}</span>
-        </div>
-      </div>
-
-      <span className={`compact-deal-status ${statusBucket.toLowerCase()}`}>{statusLabel}</span>
-
-      <button
-        type="button"
-        className="compact-expand-button"
-        onClick={() => onExpand(viewKey)}
-        aria-label={`放大 ${deal.itemName} 團購卡片`}
-        title="放大"
-      >
-        <DiagonalExpandIcon />
-      </button>
-    </article>
-  );
-}
-
-function getCampaignLifecycle(rawCampaign) {
-  const statusSource = [
-    rawCampaign?.status,
-    rawCampaign?.campaignStatus,
-    rawCampaign?.campaign_status,
-    rawCampaign?.state,
-  ]
-    .find(Boolean)
-    ?.toString()
-    .toUpperCase();
-
-  if (statusSource?.includes('CANCEL')) {
-    return 'CANCELLED';
-  }
-
-  if (statusSource?.includes('COMPLETE') || statusSource?.includes('FINISH') || statusSource?.includes('ENDED')) {
-    return 'COMPLETED';
-  }
-
-  const expireValue = rawCampaign?.expireTime ?? rawCampaign?.expire_time ?? rawCampaign?.meetupTime ?? rawCampaign?.meetup_time;
-  const expireDate = parseLocalDateTime(expireValue);
-  if (expireDate && expireDate.getTime() <= Date.now()) {
-    return 'COMPLETED';
-  }
-
-  return 'ACTIVE';
-}
-
-function isViewableParticipantStatus(status) {
-  return ['JOINED', 'CONFIRMED', 'DELIVERED', 'COMPLETED'].includes((status ?? '').toString().toUpperCase());
-}
-
-function getMineCampaignBucket(rawCampaign) {
-  const statusSource = [
-    rawCampaign?.status,
-    rawCampaign?.campaignStatus,
-    rawCampaign?.campaign_status,
-    rawCampaign?.state,
-  ]
-    .find(Boolean)
-    ?.toString()
-    .toUpperCase();
-  const participantStatusSource = [
-    rawCampaign?.myParticipantStatus,
-    rawCampaign?.my_participant_status,
-    rawCampaign?.participantStatus,
-    rawCampaign?.participant_status,
-  ]
-    .find(Boolean)
-    ?.toString()
-    .toUpperCase();
-
-  const source = (rawCampaign?.mineSource ?? rawCampaign?.__mineSource ?? '').toString().toUpperCase();
-
-  if (source === 'HOSTED') {
-    if (['OPEN', 'FULL'].includes(statusSource)) {
-      return 'ACTIVE';
-    }
-
-    if (['DELIVERED', 'COMPLETED'].includes(statusSource)) {
-      return 'COMPLETED';
-    }
-
-    if (['CANCELLED', 'FAILED'].includes(statusSource)) {
-      return 'FAILED';
-    }
-
-    if (['HOST_NO_SHOW'].includes(statusSource)) {
-      return 'ISSUE';
-    }
-  }
-
-  if (source === 'JOINED') {
-    if (['JOINED'].includes(participantStatusSource)) {
-      return 'ACTIVE';
-    }
-
-    if (['CONFIRMED', 'COMPLETED'].includes(participantStatusSource)) {
-      return 'COMPLETED';
-    }
-
-    if (['DISPUTED', 'NO_SHOW'].includes(participantStatusSource)) {
-      return 'ISSUE';
-    }
-  }
-
-  return getCampaignLifecycle(rawCampaign);
-}
-
-function canOpenReadonlyParticipationFromDeal(deal) {
-  const source = (deal?.mineSource ?? deal?.__mineSource ?? '').toString().toUpperCase();
-  const participantStatus = (
-    deal?.myParticipantStatus ??
-    deal?.my_participant_status ??
-    deal?.participantStatus ??
-    deal?.participant_status ??
-    ''
-  )
-    .toString()
-    .toUpperCase();
-  const quantity = Number(deal?.quantity ?? deal?.joinQuantity ?? deal?.join_quantity ?? deal?.joinedQuantity ?? deal?.joined_quantity ?? 0);
-
-  return (
-    source === 'JOINED' &&
-    getMineCampaignBucket(deal) === 'COMPLETED' &&
-    isViewableParticipantStatus(participantStatus) &&
-    quantity > 0
-  );
-}
-
-function normalizeNotification(notification) {
-  const type = (notification.type ?? 'NOTICE').toString().toUpperCase();
-  const typeLabelMap = {
-    CAMPAIGN_FULL: '團購已滿團',
-    CAMPAIGN_CANCELLED: '團購已取消',
-    CAMPAIGN_DELIVERED: '已標記交付',
-    CAMPAIGN_COMPLETED: '團購已完成',
-    PURCHASE_QUOTED: '收到託購報價',
-    PURCHASE_QUOTE_SELECTED: '託購報價已選定',
-    PURCHASE_QUOTE_NOT_SELECTED: '託購報價未選定',
-    PURCHASE_ACCEPTED: '託購已承接',
-    PURCHASE_REQUEST_EXPIRED: '託購已到期',
-    PURCHASE_QUOTE_EXPIRED: '託購報價已到期',
-    PURCHASE_CHAT_MESSAGE: '託購聊天室訊息',
-    PURCHASE_ORDER_STARTED: '託購已開始處理',
-    PURCHASE_ITEM_UNAVAILABLE: '託購商品缺貨',
-    PURCHASE_ORDER_CANCELLED: '託購訂單已取消',
-    PURCHASE_ORDER_SHIPPED: '託購商品已寄出',
-    PURCHASE_ORDER_DELIVERED: '託購已標記交貨',
-    PURCHASE_ORDER_COMPLETED: '託購訂單已完成',
-    PURCHASE_ORDER_AUTO_COMPLETED: '託購訂單已自動完成',
-    PURCHASE_ABNORMAL_REPORTED: '託購異常已回報',
-    PURCHASE_ABNORMAL_CLOSED: '託購異常已結案',
-    PURCHASE_ABNORMAL_TIMEOUT: '託購異常逾時',
-    PURCHASE_CONFIRMATION_TIMEOUT: '託購確認逾時',
-    INQUIRY_NEW_ANSWER: '問題收到新回答',
-    INQUIRY_EXPIRED_NO_ANSWER: '問題已到期',
-    NOTICE: '通知',
-  };
-
-  return {
-    id: notification.id ?? notification.notificationId ?? notification.notification_id ?? null,
-    type,
-    typeLabel: typeLabelMap[type] ?? type,
-    referenceId: notification.referenceId ?? notification.reference_id ?? null,
-    content: notification.content ?? '',
-    createdAt: notification.createdAt ?? notification.created_at ?? '',
-  };
-}
-
-function getLiveNotificationKey(notification) {
-  return String(
-    notification?.id ??
-      `${notification?.type ?? 'NOTICE'}-${notification?.referenceId ?? 'none'}-${notification?.createdAt ?? ''}-${notification?.content ?? ''}`
-  );
-}
-
-function getLiveNotificationTone(notification) {
-  const type = (notification?.type ?? '').toString().toUpperCase();
-
-  if (type.includes('CANCEL') || type.includes('KICK') || type.includes('FAIL') || type.includes('NO_SHOW') || type.includes('DISPUT')) {
-    return 'danger';
-  }
-
-  if (type.includes('COMPLETE') || type.includes('CONFIRM')) {
-    return 'success';
-  }
-
-  if (type.includes('FULL') || type.includes('DELIVER')) {
-    return 'primary';
-  }
-
-  return 'neutral';
-}
-
-function normalizeHostParticipant(participant, index = 0) {
-  return {
-    participantId: participant?.participantId ?? participant?.id ?? participant?.userId ?? participant?.user_id ?? null,
-    participantsId: participant?.participantsId ?? participant?.participants_id ?? null,
-    userId: participant?.userId ?? participant?.user_id ?? participant?.memberId ?? null,
-    displayName:
-      participant?.displayName ??
-      participant?.userDisplayName ??
-      participant?.user?.displayName ??
-      `團員 ${index + 1}`,
-    quantity: Number(participant?.quantity ?? participant?.joinedQuantity ?? participant?.joined_quantity ?? 0),
-    status:
-      participant?.status ??
-      participant?.participantStatus ??
-      participant?.participant_status ??
-      participant?.joinStatus ??
-      '',
-  };
-}
-
-function normalizeHostDashboard(dashboard) {
-  const participants = Array.isArray(dashboard?.participants)
-    ? dashboard.participants.map((participant, index) => normalizeHostParticipant(participant, index))
-    : [];
-
-  return {
-    ...dashboard,
-    status: dashboard?.status ?? '',
-    allowRevision: Boolean(dashboard?.allowRevision ?? dashboard?.allow_revision ?? false),
-    totalPhysicalQuantity: Number(dashboard?.totalPhysicalQuantity ?? dashboard?.total_physical_quantity ?? 0),
-    openQuantity: Number(dashboard?.openQuantity ?? dashboard?.open_quantity ?? 0),
-    hostReservedQuantity: Number(dashboard?.hostReservedQuantity ?? dashboard?.host_reserved_quantity ?? 0),
-    alreadySoldQuantity: Number(dashboard?.alreadySoldQuantity ?? dashboard?.already_sold_quantity ?? 0),
-    availableQuantity: Number(dashboard?.availableQuantity ?? dashboard?.available_quantity ?? 0),
-    participants,
-  };
-}
-
-function normalizeNotificationList(data) {
-  const items = Array.isArray(data?.content) ? data.content : Array.isArray(data) ? data : [];
-  const purchaseChatRoomsSeen = new Set();
-
-  return items.map(normalizeNotification).filter((notification) => {
-    if (notification.type !== 'PURCHASE_CHAT_MESSAGE' || notification.referenceId == null) {
-      return true;
-    }
-
-    const roomKey = String(notification.referenceId);
-    if (purchaseChatRoomsSeen.has(roomKey)) {
-      return false;
-    }
-    purchaseChatRoomsSeen.add(roomKey);
-    return true;
-  });
-}
-
-function getReviewKey(campaignId, revieweeId) {
-  return `${Number(campaignId)}:${Number(revieweeId)}`;
-}
-
-function isReviewAlreadyCompleted(data) {
-  return Boolean(
-    data?.reviewed ??
-      data?.isReviewed ??
-      data?.alreadyReviewed ??
-      data?.exists ??
-      data?.checked
-  );
-}
-
-function getCampaignListSignature(items) {
-  return JSON.stringify(Array.isArray(items) ? items : []);
-}
-
-function buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter) {
-  const hostedItems = (Array.isArray(hostedData?.content) ? hostedData.content : Array.isArray(hostedData) ? hostedData : []).map(
-    (campaign) => ({
-      ...campaign,
-      mineSource: 'HOSTED',
-    })
-  );
-  const joinedItems = (Array.isArray(joinedData?.content) ? joinedData.content : Array.isArray(joinedData) ? joinedData : []).map(
-    (campaign) => ({
-      ...campaign,
-      mineSource: 'JOINED',
-    })
-  );
-  const mergedCampaigns = [...hostedItems, ...joinedItems];
-  const campaignMap = new Map();
-
-  mergedCampaigns.forEach((campaign, index) => {
-    const key =
-      campaign.id ??
-      campaign.campaignId ??
-      `${campaign.mineSource ?? 'campaign'}-${campaign.itemName ?? campaign.item_name ?? 'campaign'}-${campaign.expireTime ?? campaign.expire_time ?? index}`;
-    if (!campaignMap.has(key)) {
-      campaignMap.set(key, campaign);
-    }
-  });
-
-  let items = Array.from(campaignMap.values());
-
-  if (activeMyCampaignScope !== 'ALL') {
-    items = items.filter((campaign) => campaign.mineSource === activeMyCampaignScope);
-  }
-
-  if (activeMyCampaignFilter !== 'ALL') {
-    items = items.filter((campaign) => getMineCampaignBucket(campaign) === activeMyCampaignFilter);
-  }
-
-  return items.map(mapCampaign);
-}
-
-function buildHostParticipationCampaign(deal, dashboard) {
-  const normalizedDashboard = normalizeHostDashboard(dashboard);
-
-  return {
-    ...deal,
-    managementMode: 'HOST',
-    dashboard: normalizedDashboard,
-    status: normalizedDashboard.status || deal.status,
-    allowRevision: normalizedDashboard.allowRevision,
-    totalPhysicalQuantity: normalizedDashboard.totalPhysicalQuantity,
-    hostReservedQuantity: normalizedDashboard.hostReservedQuantity,
-    openQuantity: normalizedDashboard.openQuantity,
-    alreadySoldQuantity: normalizedDashboard.alreadySoldQuantity,
-  };
-}
-
-function getCampaignChatAccess(campaign) {
-  return (campaign?.chatAccess ?? campaign?.chat_access ?? '').toString().trim().toUpperCase();
-}
-
-function canOpenCampaignChat(campaign) {
-  return hasUsableCampaignId(campaign) && ['READ_WRITE', 'READ_ONLY'].includes(getCampaignChatAccess(campaign));
-}
-
-function getCampaignIdValue(campaign) {
-  return campaign?.id ?? campaign?.campaignId;
-}
-
-function getNormalizedCampaignId(campaign) {
-  const campaignId = getCampaignIdValue(campaign);
-
-  if (campaignId == null) {
-    return null;
-  }
-
-  const campaignIdText = String(campaignId).trim();
-  if (!campaignIdText) {
-    return null;
-  }
-
-  const normalizedCampaignId = Number(campaignIdText);
-  return Number.isInteger(normalizedCampaignId) && normalizedCampaignId > 0 ? normalizedCampaignId : null;
-}
-
-function getCampaignDisplayName(campaign, fallbackCampaignId = null) {
-  const itemName = (campaign?.itemName ?? campaign?.item_name ?? '').toString().trim();
-  const campaignId = getNormalizedCampaignId(campaign) ?? fallbackCampaignId;
-  const idLabel = campaignId != null ? `（團購編號 #${campaignId}）` : '';
-
-  return itemName ? `「${itemName}」${idLabel}` : idLabel || '這筆團購';
-}
-
-function hasUsableCampaignId(campaign) {
-  return getNormalizedCampaignId(campaign) != null;
-}
-
-function canDisplayMarketCampaign(campaign, campaignTypeFilter, hideFull = false) {
-  if (campaignTypeFilter !== 'ALL' && campaign?.scenarioType !== campaignTypeFilter) {
-    return false;
-  }
-
-  const statusSource = getCampaignStatusValue(campaign);
-  const isFull = statusSource.includes('FULL') || Number(campaign?.availableQuantity) <= 0;
-
-  if (hideFull && isFull) {
-    return false;
-  }
-
-  if (!statusSource) {
-    return Number.isFinite(Number(campaign?.availableQuantity));
-  }
-
-  return ['OPEN', 'FULL'].some((status) => statusSource.includes(status));
-}
-
-function getCampaignStatusValue(campaign) {
-  return (campaign?.status ?? campaign?.campaignStatus ?? campaign?.campaign_status ?? campaign?.state ?? '')
-    .toString()
-    .toUpperCase();
-}
-
-function getCampaignCompletedAtValue(campaign) {
-  return campaign?.completedAt ?? campaign?.completed_at ?? campaign?.completedTime ?? campaign?.completed_time ?? '';
-}
-
-function getCampaignChatExpiresAtValue(campaign) {
-  return (
-    campaign?.chatExpiresAt ??
-    campaign?.chat_expires_at ??
-    campaign?.chatExpiredAt ??
-    campaign?.chat_expired_at ??
-    campaign?.chatEndAt ??
-    campaign?.chat_end_at ??
-    ''
-  );
-}
-
-function getCampaignEstablishedAtValue(campaign) {
-  return (
-    campaign?.establishedAt ??
-    campaign?.established_at ??
-    campaign?.formedAt ??
-    campaign?.formed_at ??
-    campaign?.fullAt ??
-    campaign?.full_at ??
-    campaign?.campaignFullAt ??
-    campaign?.campaign_full_at ??
-    campaign?.chatCreatedAt ??
-    campaign?.chat_created_at ??
-    campaign?.chatOpenedAt ??
-    campaign?.chat_opened_at ??
-    ''
-  );
-}
-
-function canListCampaignChatRoom(campaign) {
-  return canOpenCampaignChat(campaign);
-}
-
-function getChatRoomSortTime(campaign) {
-  const date = parseLocalDateTime(
-    getCampaignEstablishedAtValue(campaign) ||
-      getCampaignChatExpiresAtValue(campaign) ||
-      getCampaignCompletedAtValue(campaign) ||
-      campaign?.meetupTime ||
-      campaign?.meetup_time ||
-      campaign?.expireTime ||
-      campaign?.expire_time
-  );
-
-  return date ? date.getTime() : 0;
-}
-
-function buildOpenChatRooms(hostedData, joinedData) {
-  return buildMineCampaigns(hostedData, joinedData, 'ALL', 'ALL')
-    .filter(hasUsableCampaignId)
-    .sort((first, second) => getChatRoomSortTime(second) - getChatRoomSortTime(first));
-}
-
-async function attachCampaignChatAccess(campaigns, token) {
-  return mapWithConcurrency(campaigns, 4, async (campaign) => {
-    const campaignId = getNormalizedCampaignId(campaign);
-    if (campaignId == null) {
-      return { ...campaign, chatAccess: 'NONE' };
-    }
-
-    try {
-      const participation = await fetchMyParticipation(campaignId, token);
-      return { ...campaign, chatAccess: getCampaignChatAccess(participation) || 'NONE' };
-    } catch (error) {
-      if (error?.message === AUTH_EXPIRED_MESSAGE) {
-        throw error;
-      }
-      return { ...campaign, chatAccess: 'NONE' };
-    }
-  });
-}
-
-function getNavigationTabValue(type) {
-  return type === 'INSTANT' || type === 'SCHEDULED' ? 'CAMPAIGN' : type;
-}
-
-function normalizePurchaseChatRoom(room) {
-  return {
-    ...room,
-    roomType: 'PURCHASE',
-    id: room?.id,
-    orderId: room?.orderId ?? room?.order_id,
-    itemName: room?.itemName ?? room?.item_name ?? '託購聊天室',
-    counterpartId: room?.counterpartId ?? room?.counterpart_id,
-    counterpartName: room?.counterpartName ?? room?.counterpart_name ?? '',
-    counterpartAvatarUrl: room?.counterpartAvatarUrl ?? room?.counterpart_avatar_url ?? '',
-    orderStatus: (room?.orderStatus ?? room?.order_status ?? '').toString().toUpperCase(),
-    readOnly: Boolean(room?.readOnly ?? room?.read_only),
-    unreadCount: Number(room?.unreadCount ?? room?.unread_count ?? 0),
-    lastMessage: room?.lastMessage ?? room?.last_message ?? null,
-    updatedAt: room?.updatedAt ?? room?.updated_at ?? '',
-  };
-}
-
-function getCombinedChatRoomSortTime(room) {
-  const value =
-    room?.roomType === 'PURCHASE'
-      ? room?.lastMessage?.createdAt ?? room?.lastMessage?.created_at ?? room?.updatedAt
-      : getCampaignEstablishedAtValue(room) || getCampaignChatExpiresAtValue(room) || getCampaignCompletedAtValue(room);
-  const date = parseLocalDateTime(value);
-  return date ? date.getTime() : 0;
-}
-
-function isSameUserId(firstUserId, secondUserId) {
-  if (firstUserId == null || secondUserId == null) {
-    return false;
-  }
-
-  return Number(firstUserId) === Number(secondUserId);
-}
-
-function isCampaignHostForUser(campaign, currentUser) {
-  const source = (campaign?.mineSource ?? campaign?.__mineSource ?? '').toString().toUpperCase();
-
-  return (
-    campaign?.managementMode === 'HOST' ||
-    source === 'HOSTED' ||
-    Boolean(campaign?.isHost) ||
-    isSameUserId(campaign?.host?.id, currentUser?.id)
-  );
-}
-
-function areStringArraysEqual(first = [], second = []) {
-  return first.length === second.length && first.every((item, index) => item === second[index]);
-}
-
-function reorderList(items, fromIndex, toIndex) {
-  if (
-    !Array.isArray(items) ||
-    fromIndex === toIndex ||
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= items.length ||
-    toIndex >= items.length
-  ) {
-    return items;
-  }
-
-  const nextItems = [...items];
-  const [movedItem] = nextItems.splice(fromIndex, 1);
-  nextItems.splice(toIndex, 0, movedItem);
-  return nextItems;
-}
-
-function getCampaignImageOrderNames(campaign, images) {
-  const imageRefs =
-    Array.isArray(campaign?.imageRefs) && campaign.imageRefs.length === images.length
-      ? campaign.imageRefs
-      : images;
-
-  return imageRefs.map(getCampaignImageOrderName);
-}
-
-function canReorderCampaignImages(campaign, currentUser) {
-  const images = Array.isArray(campaign?.imageUrls) ? campaign.imageUrls : [];
-  const orderNames = getCampaignImageOrderNames(campaign, images);
-
-  return (
-    isCampaignHostForUser(campaign, currentUser) &&
-    getMineCampaignBucket(campaign) === 'ACTIVE' &&
-    images.length > 1 &&
-    orderNames.length === images.length &&
-    orderNames.every(Boolean)
-  );
-}
-
-function isFullCampaignNotification(notification) {
-  return notification?.type === 'CAMPAIGN_FULL' && notification?.referenceId != null;
-}
-
-function isReviewCampaignNotification(notification) {
-  return notification?.type === 'CAMPAIGN_COMPLETED' && notification?.referenceId != null;
-}
-
-function isPurchaseChatNotification(notification) {
-  return notification?.type === 'PURCHASE_CHAT_MESSAGE' && notification?.referenceId != null;
-}
-
-function isPurchaseOrderNotification(notification) {
-  const type = notification?.type;
-
-  return (
-    notification?.referenceId != null &&
-    [
-      'PURCHASE_QUOTE_SELECTED',
-      'PURCHASE_ACCEPTED',
-      'PURCHASE_ORDER_STARTED',
-      'PURCHASE_ITEM_UNAVAILABLE',
-      'PURCHASE_ORDER_CANCELLED',
-      'PURCHASE_ORDER_SHIPPED',
-      'PURCHASE_ORDER_DELIVERED',
-      'PURCHASE_ORDER_COMPLETED',
-      'PURCHASE_ORDER_AUTO_COMPLETED',
-      'PURCHASE_ABNORMAL_REPORTED',
-      'PURCHASE_ABNORMAL_CLOSED',
-      'PURCHASE_ABNORMAL_TIMEOUT',
-      'PURCHASE_CONFIRMATION_TIMEOUT',
-    ].includes(type)
-  );
-}
-
-function isInquiryNotification(notification) {
-  return ['INQUIRY_NEW_ANSWER', 'INQUIRY_EXPIRED_NO_ANSWER'].includes(notification?.type) && notification.referenceId != null;
-}
-
-const PROFILE_RETURN_CONTEXT_KEY = 'profile_return_context';
 function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const swipeTabs = ['MINE', 'CAMPAIGN', 'REQUEST', 'INQUIRY'];
-  const campaignTypeOptions = [
-    { value: 'ALL', label: '全部' },
-    ...TYPE_OPTIONS,
-  ];
-  const localizedMyCampaignScopes = [
-    { value: 'ALL', label: '全部' },
-    { value: 'HOSTED', label: '我發起的' },
-    { value: 'JOINED', label: '我參加的' },
-  ];
-  const localizedMineDomains = [
-    { value: 'CAMPAIGN', label: '我的團購' },
-    { value: 'REQUEST', label: '我的託購' },
-  ];
-  const localizedMyCampaignOptions = [
-    { value: 'ALL', label: '全部' },
-    { value: 'ACTIVE', label: '進行中' },
-    { value: 'COMPLETED', label: '已完成' },
-    { value: 'FAILED', label: '失敗' },
-    { value: 'ISSUE', label: '異常' },
-  ];
-  const localizedExpirePresetOptions = EXPIRE_PRESET_OPTIONS.map((option) => {
-    if (option.value === '10m') {
-      return { ...option, label: '10 分鐘後' };
-    }
-
-    if (option.value === '20m') {
-      return { ...option, label: '20 分鐘後' };
-    }
-
-    if (option.value === '30m') {
-      return { ...option, label: '30 分鐘後' };
-    }
-
-    if (option.value === 'custom') {
-      return { ...option, label: '自訂' };
-    }
-
-    return option;
-  });
+  const {
+    swipeTabs,
+    activeType,
+    setActiveType,
+    activeStoreIds,
+    setActiveStoreIds,
+    search,
+    setSearch,
+    deferredSearch,
+    dealViewModePreferences,
+    setDealViewModePreferences,
+    expandedCompactDealId,
+    setExpandedCompactDealId,
+    isDealViewControlVisible,
+    isDesktopViewport,
+    pageTransitionDirection,
+    isSearchExpanded,
+    setIsSearchExpanded,
+    isNavigationOpen,
+    setIsNavigationOpen,
+    mobileSearchScope,
+    setMobileSearchScope,
+    isRefreshing,
+    setIsRefreshing,
+    pullDistance,
+    setPullDistance,
+    themeMode,
+    setThemeMode,
+    pullStartYRef,
+    swipeStartXRef,
+    canPullRef,
+    gestureLockRef,
+    searchInputRef,
+    mobileSearchInputRef,
+    navigationRef,
+    searchReturnContextRef
+  } = useMainLayoutState();
+  const {
+    campaignTypeOptions,
+    localizedExpirePresetOptions,
+    activeCampaignType,
+    setActiveCampaignType,
+    activeCategory,
+    setActiveCategory,
+    hideFullCampaigns,
+    setHideFullCampaigns,
+    activeMarketStatus,
+    setActiveMarketStatus,
+    isCreateCampaignOpen,
+    setIsCreateCampaignOpen,
+    campaignForm,
+    setCampaignForm,
+    isCreatingCampaign,
+    setIsCreatingCampaign,
+    createCampaignError,
+    setCreateCampaignError,
+    createdCampaignSummary,
+    setCreatedCampaignSummary,
+    selectedDealToJoin,
+    setSelectedDealToJoin,
+    purchaseQuantity,
+    setPurchaseQuantity,
+    purchaseError,
+    setPurchaseError,
+    isSubmittingPurchase,
+    setIsSubmittingPurchase,
+    createSummaryTimerRef
+  } = useCampaignsPageState();
+  const {
+    localizedMyCampaignScopes,
+    localizedMineDomains,
+    localizedMyCampaignOptions,
+    activeMineDomain,
+    setActiveMineDomain,
+    activeMyCampaignScope,
+    setActiveMyCampaignScope,
+    activeMyCampaignFilter,
+    setActiveMyCampaignFilter,
+    participationCampaign,
+    setParticipationCampaign,
+    participationQuantityDraft,
+    setParticipationQuantityDraft,
+    participationError,
+    setParticipationError,
+    isSubmittingParticipation,
+    setIsSubmittingParticipation,
+    reviewTarget,
+    setReviewTarget,
+    reviewedReviewKeys,
+    setReviewedReviewKeys,
+    chatReviewState,
+    setChatReviewState,
+    focusedCampaignId,
+    setFocusedCampaignId
+  } = useMinePageState();
 
   const uiLabels = {
     ...LABELS,
@@ -1112,29 +208,20 @@ function HomePage() {
     totalQuantityLabel: '\u7e3d\u6578\u91cf',
   };
 
-  const [stores, setStores] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [referenceError, setReferenceError] = useState('');
-  const [isReferenceLoading, setIsReferenceLoading] = useState(true);
-  const [activeType, setActiveType] = useState('SCHEDULED');
-  const [activeCampaignType, setActiveCampaignType] = useState('ALL');
-  const [activeCategory, setActiveCategory] = useState(0);
-  const [hideFullCampaigns, setHideFullCampaigns] = useState(getInitialMarketHideFullEnabled);
-  const [activeMarketStatus, setActiveMarketStatus] = useState('ALL');
-  const [activeMineDomain, setActiveMineDomain] = useState('CAMPAIGN');
-  const [activeMyCampaignScope, setActiveMyCampaignScope] = useState('ALL');
-  const [activeMyCampaignFilter, setActiveMyCampaignFilter] = useState('ALL');
-  const [activeStoreIds, setActiveStoreIds] = useState([]);
-  const [inquiryTargetId, setInquiryTargetId] = useState(null);
-  const [isInquiryDetailOpen, setIsInquiryDetailOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const deferredSearch = useDeferredValue(search);
-  const [campaigns, setCampaigns] = useState([]);
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [campaignError, setCampaignError] = useState('');
+  const {
+    stores,
+    categories,
+    referenceError,
+    isReferenceLoading
+  } = useReferenceData();
+
+  const {
+    inquiryTargetId,
+    setInquiryTargetId,
+    isInquiryDetailOpen,
+    setIsInquiryDetailOpen
+  } = useInquiriesPage();
+
   const [token, setToken] = useState(getStoredToken());
   const [user, setUser] = useState(() => normalizeUser(getStoredUser()));
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -1153,7 +240,7 @@ function HomePage() {
   const [liveNotifications, setLiveNotifications] = useState([]);
   const [isNotificationSoundEnabled, setIsNotificationSoundEnabled] = useState(getInitialNotificationSoundEnabled);
   const [successToast, setSuccessToast] = useState(null);
-  const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
+
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -1163,50 +250,30 @@ function HomePage() {
     }
   );
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [campaignForm, setCampaignForm] = useState(getInitialCampaignForm);
-  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
-  const [createCampaignError, setCreateCampaignError] = useState('');
-  const [createdCampaignSummary, setCreatedCampaignSummary] = useState(null);
-  const [selectedDealToJoin, setSelectedDealToJoin] = useState(null);
-  const [purchaseQuantity, setPurchaseQuantity] = useState('1');
-  const [purchaseError, setPurchaseError] = useState('');
-  const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
-  const [requestRewardMethod, setRequestRewardMethod] = useState('fixed');
-  const [requestDeliveryMethod, setRequestDeliveryMethod] = useState('meetup');
-  const [requestCompletionTimeMode, setRequestCompletionTimeMode] = useState('specific');
-  const [requestDeadlineMode, setRequestDeadlineMode] = useState('specific');
-  const [requestDraftMessage, setRequestDraftMessage] = useState('');
-  const [isProxyRequestFormOpen, setIsProxyRequestFormOpen] = useState(false);
-  const [isProxyRequestModalOpen, setIsProxyRequestModalOpen] = useState(false);
-  const [participationCampaign, setParticipationCampaign] = useState(null);
-  const [participationQuantityDraft, setParticipationQuantityDraft] = useState('1');
-  const [participationError, setParticipationError] = useState('');
-  const [isSubmittingParticipation, setIsSubmittingParticipation] = useState(false);
-  const [reviewTarget, setReviewTarget] = useState(null);
-  const [reviewedReviewKeys, setReviewedReviewKeys] = useState({});
-  const [chatReviewState, setChatReviewState] = useState({
-    isParticipantReviewed: false,
-    isHostAllReviewed: false,
-  });
+
+  const {
+    requestRewardMethod,
+    setRequestRewardMethod,
+    requestDeliveryMethod,
+    setRequestDeliveryMethod,
+    requestCompletionTimeMode,
+    setRequestCompletionTimeMode,
+    requestDeadlineMode,
+    setRequestDeadlineMode,
+    requestDraftMessage,
+    isProxyRequestFormOpen,
+    setIsProxyRequestFormOpen,
+    isProxyRequestModalOpen,
+    setIsProxyRequestModalOpen,
+    handleSubmitProxyPurchaseRequest
+  } = useRequestsPage();
+
   const [chatCampaign, setChatCampaign] = useState(null);
   const [purchaseChatRoom, setPurchaseChatRoom] = useState(null);
   const [purchaseOrderFromChat, setPurchaseOrderFromChat] = useState(null);
   const chatReturnContextRef = useRef(null);
   const [chatStatusEvent, setChatStatusEvent] = useState(null);
-  const [galleryState, setGalleryState] = useState({
-    isOpen: false,
-    title: '',
-    campaignId: null,
-    images: [],
-    imageOrderNames: [],
-    originalImageOrderNames: [],
-    activeIndex: 0,
-    canReorder: false,
-    hasOrderChanges: false,
-    isSavingOrder: false,
-    orderMessage: '',
-    orderError: '',
-  });
+
   useEffect(() => {
     const syncAuthState = (event) => {
       const nextToken = getStoredToken();
@@ -1249,57 +316,48 @@ function HomePage() {
   }, []);
   const [referenceRefreshKey, setReferenceRefreshKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [focusedCampaignId, setFocusedCampaignId] = useState('');
-  const [dealViewModePreferences, setDealViewModePreferences] = useState(getInitialDealViewModePreferences);
-  const [expandedCompactDealId, setExpandedCompactDealId] = useState('');
-  const [isDealViewControlVisible, setIsDealViewControlVisible] = useState(true);
-  const [isDesktopViewport, setIsDesktopViewport] = useState(() => window.matchMedia('(min-width: 700px)').matches);
-  const [pageTransitionDirection, setPageTransitionDirection] = useState('forward');
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
-  const [isNavigationOpen, setIsNavigationOpen] = useState(false);
-  const [mobileSearchScope, setMobileSearchScope] = useState('CAMPAIGN');
+
   const isChatFocusMode = isChatRoomsOpen || Boolean(chatCampaign) || Boolean(purchaseChatRoom);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [pullDistance, setPullDistance] = useState(0);
-  const [themeMode, setThemeMode] = useState(() => {
-    const savedTheme = localStorage.getItem('theme_mode');
-    if (savedTheme === 'light' || savedTheme === 'dark') {
-      return savedTheme;
-    }
 
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
-
-  const sentinelRef = useRef(null);
-  const createSummaryTimerRef = useRef(null);
-  const pullStartYRef = useRef(null);
-  const swipeStartXRef = useRef(null);
-  const canPullRef = useRef(false);
-  const gestureLockRef = useRef('');
-  const searchInputRef = useRef(null);
-  const mobileSearchInputRef = useRef(null);
-  const navigationRef = useRef(null);
-  const searchReturnContextRef = useRef(null);
   const notificationClientRef = useRef(null);
   const chatCampaignRef = useRef(null);
   const purchaseChatRoomRef = useRef(null);
   const liveNotificationTimersRef = useRef(new Map());
   const successToastTimerRef = useRef(null);
-  const dealViewControlTimerRef = useRef(null);
+
   const notificationAudioContextRef = useRef(null);
   const notificationSoundEnabledRef = useRef(isNotificationSoundEnabled);
   const lastHandledChatNotificationRef = useRef('');
   const pendingProfileReturnRef = useRef(null);
   const profileRestoreAppliedRef = useRef(false);
-  const campaignsSignatureRef = useRef('[]');
+
   const chatRoomsRef = useRef(chatRooms);
+
+  const marketFeed = useCampaignsFeed({
+    enabled: !['MINE', 'REQUEST', 'INQUIRY'].includes(activeType),
+    activeStoreIds, activeCategory, activeCampaignType, hideFullCampaigns, deferredSearch, refreshKey,
+  });
+  const mineFeed = useMineCampaigns({
+    enabled: activeType === 'MINE' && activeMineDomain === 'CAMPAIGN',
+    token, activeMyCampaignScope, activeMyCampaignFilter, refreshKey, focusedCampaignId, setFocusedCampaignId,
+  });
+  const activeFeed = activeType === 'MINE' ? mineFeed : marketFeed;
+  const { campaigns, campaignError, setCampaignError, hasMore, isInitialLoading, isLoadingMore, sentinelRef } = activeFeed;
+  usePageScroll(isInitialLoading || isReferenceLoading, Boolean(focusedCampaignId || inquiryTargetId));
+  const { refreshMineCampaignsBeforeOpen } = mineFeed;
+  const { setCampaigns: setMarketCampaigns } = marketFeed;
+  const { setCampaigns: setMineCampaigns } = mineFeed;
+  const setCampaigns = useCallback(update => {
+    setMarketCampaigns(update);
+    setMineCampaigns(update);
+  }, [setMarketCampaigns, setMineCampaigns]);
 
   useEffect(() => {
     if (isChatFocusMode) {
       setIsNavigationOpen(false);
     }
-  }, [isChatFocusMode]);
+  }, [isChatFocusMode, setIsNavigationOpen]);
 
   const wsUrl = useMemo(() => new URL('/ws', getBackendBaseUrl()).toString(), []);
   const chatUnreadRoomCount = useMemo(
@@ -1372,42 +430,18 @@ function HomePage() {
   }, [navigate, user?.id]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = themeMode;
-    localStorage.setItem('theme_mode', themeMode);
-  }, [themeMode]);
-
-  useEffect(() => {
-    localStorage.setItem(MARKET_HIDE_FULL_KEY, String(hideFullCampaigns));
-  }, [hideFullCampaigns]);
-
-  useEffect(() => {
     notificationSoundEnabledRef.current = isNotificationSoundEnabled;
   }, [isNotificationSoundEnabled]);
 
   useEffect(() => {
-    campaignsSignatureRef.current = getCampaignListSignature(campaigns);
-  }, [campaigns]);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(min-width: 700px)');
-    const syncDesktopViewport = () => setIsDesktopViewport(mediaQuery.matches);
-
-    syncDesktopViewport();
-    mediaQuery.addEventListener('change', syncDesktopViewport);
-
-    return () => mediaQuery.removeEventListener('change', syncDesktopViewport);
-  }, []);
-
-  useEffect(() => {
+    const notificationTimers = liveNotificationTimersRef.current;
     return () => {
-      liveNotificationTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
-      liveNotificationTimersRef.current.clear();
+      notificationTimers.forEach((timerId) => window.clearTimeout(timerId));
+      notificationTimers.clear();
       if (successToastTimerRef.current) {
         window.clearTimeout(successToastTimerRef.current);
       }
-      if (dealViewControlTimerRef.current) {
-        window.clearTimeout(dealViewControlTimerRef.current);
-      }
+
       if (notificationAudioContextRef.current) {
         void notificationAudioContextRef.current.close();
         notificationAudioContextRef.current = null;
@@ -1433,39 +467,6 @@ function HomePage() {
   }, [isNotificationSoundEnabled]);
 
   useEffect(() => {
-    if (isSearchExpanded) {
-      setIsDealViewControlVisible(false);
-      return undefined;
-    }
-
-    setIsDealViewControlVisible(true);
-
-    const hideUntilIdle = () => {
-      setIsDealViewControlVisible(false);
-
-      if (dealViewControlTimerRef.current) {
-        window.clearTimeout(dealViewControlTimerRef.current);
-      }
-
-      dealViewControlTimerRef.current = window.setTimeout(() => {
-        setIsDealViewControlVisible(true);
-      }, 3500);
-    };
-
-    const events = ['scroll', 'wheel', 'touchmove'];
-    events.forEach((eventName) => window.addEventListener(eventName, hideUntilIdle, { passive: true }));
-
-    return () => {
-      if (dealViewControlTimerRef.current) {
-        window.clearTimeout(dealViewControlTimerRef.current);
-        dealViewControlTimerRef.current = null;
-      }
-
-      events.forEach((eventName) => window.removeEventListener(eventName, hideUntilIdle));
-    };
-  }, [activeType, isSearchExpanded]);
-
-  useEffect(() => {
     if (profileRestoreAppliedRef.current) {
       return;
     }
@@ -1479,13 +480,15 @@ function HomePage() {
       }
 
       const context = JSON.parse(raw);
+      if (location.state?.focusCampaignId || location.state?.focusPurchaseRequestId
+        || (context.path ?? mainPath(context.ui?.activeType)) !== location.pathname) {
+        sessionStorage.removeItem(PROFILE_RETURN_CONTEXT_KEY);
+        return;
+      }
       pendingProfileReturnRef.current = context;
       sessionStorage.removeItem(PROFILE_RETURN_CONTEXT_KEY);
 
       if (context?.ui) {
-        if (context.ui.activeType) {
-          setActiveType(getNavigationTabValue(context.ui.activeType) === 'CAMPAIGN' ? 'SCHEDULED' : context.ui.activeType);
-        }
         if (context.ui.activeCampaignType) {
           setActiveCampaignType(context.ui.activeCampaignType);
         }
@@ -1518,7 +521,7 @@ function HomePage() {
       sessionStorage.removeItem(PROFILE_RETURN_CONTEXT_KEY);
       pendingProfileReturnRef.current = null;
     }
-  }, []);
+  }, [setActiveCampaignType, setActiveCategory, setActiveMyCampaignFilter, setActiveMyCampaignScope, setActiveStoreIds, setHideFullCampaigns, setSearch, location.pathname, location.state]);
 
   useEffect(() => {
     const pendingContext = pendingProfileReturnRef.current;
@@ -1540,90 +543,12 @@ function HomePage() {
   }, [campaigns, chatCampaign, isInitialLoading]);
 
   useEffect(() => {
-    if (location.state?.activeType) {
-      switchActiveType(location.state.activeType);
-    }
-
-    const targetCampaignId = location.state?.focusCampaignId;
-    if (!targetCampaignId) {
-      if (location.state?.activeType) {
-        window.history.replaceState({}, document.title);
-      }
-      return;
-    }
-
-    setFocusedCampaignId(String(targetCampaignId));
-    switchActiveType('MINE');
-    setActiveMyCampaignScope('ALL');
-    setActiveMyCampaignFilter('ALL');
-    window.history.replaceState({}, document.title);
-  }, [location.state]);
-
-  useEffect(() => {
-    if (!focusedCampaignId || isInitialLoading) {
-      return;
-    }
-
-    const node = document.getElementById(`deal-card-${focusedCampaignId}`);
-    if (!node) {
-      return;
-    }
-
-    const timerId = window.setTimeout(() => {
-      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 80);
-
-    const clearTimerId = window.setTimeout(() => {
-      setFocusedCampaignId('');
-    }, 2200);
-
-    return () => {
-      window.clearTimeout(timerId);
-      window.clearTimeout(clearTimerId);
-    };
-  }, [campaigns, focusedCampaignId, isInitialLoading]);
-
-  useEffect(() => {
     const timerId = window.setInterval(() => {
       setCountdownNow(Date.now());
     }, 1000);
 
     return () => window.clearInterval(timerId);
   }, [referenceRefreshKey]);
-
-  useEffect(() => {
-    if (!createdCampaignSummary) {
-      return undefined;
-    }
-
-    createSummaryTimerRef.current = window.setTimeout(() => {
-      setCreatedCampaignSummary(null);
-    }, 10000);
-
-    return () => {
-      if (createSummaryTimerRef.current) {
-        window.clearTimeout(createSummaryTimerRef.current);
-        createSummaryTimerRef.current = null;
-      }
-    };
-  }, [createdCampaignSummary]);
-
-  useEffect(() => {
-    setCampaignForm((current) => {
-      const nextExpirePreset = current.scenarioType === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m';
-      const nextSuggestedMeetupTime = getSuggestedMeetupTime({ ...current, expirePreset: nextExpirePreset });
-
-      if (current.expirePreset === nextExpirePreset && current.meetupTime === nextSuggestedMeetupTime) {
-        return current;
-      }
-
-      return {
-        ...current,
-        expirePreset: nextExpirePreset,
-        meetupTime: nextSuggestedMeetupTime,
-      };
-    });
-  }, [campaignForm.scenarioType, campaignForm.expirePreset, campaignForm.expireTime]);
 
   useEffect(() => {
     const handleLineLoginMessage = (event) => {
@@ -1655,7 +580,7 @@ function HomePage() {
 
     window.addEventListener('message', handleLineLoginMessage);
     return () => window.removeEventListener('message', handleLineLoginMessage);
-  }, []);
+  }, [setIsCreateCampaignOpen]);
 
   useEffect(() => {
     if (!token) {
@@ -1856,212 +781,7 @@ function HomePage() {
       notificationClientRef.current?.deactivate();
       notificationClientRef.current = null;
     };
-  }, [pushLiveNotification, token, wsUrl]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadReferenceData = async () => {
-      setIsReferenceLoading(true);
-      setReferenceError('');
-
-      try {
-        const [storesData, categoriesData] = await Promise.all([fetchStores(), fetchCategories()]);
-
-        if (cancelled) {
-          return;
-        }
-
-        setStores(Array.isArray(storesData) ? storesData : []);
-        setCategories(Array.isArray(categoriesData) ? categoriesData : []);
-      } catch (error) {
-        if (!cancelled) {
-          setReferenceError(error.message);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsReferenceLoading(false);
-        }
-      }
-    };
-
-    loadReferenceData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const fetchCampaignsForSelectedStores = useCallback(
-    async (query) => {
-      const selectedStoreIds = activeStoreIds.map((id) => Number(id)).filter(Boolean);
-      if (selectedStoreIds.length <= 1) {
-        return fetchCampaigns({
-          ...query,
-          storeId: selectedStoreIds[0] || undefined,
-        });
-      }
-
-      const pages = await Promise.all(
-        selectedStoreIds.map((storeId) =>
-          fetchCampaigns({
-            ...query,
-            storeId,
-          })
-        )
-      );
-      const seenIds = new Set();
-      const content = pages
-        .flatMap((pageData) => (Array.isArray(pageData?.content) ? pageData.content : []))
-        .filter((item) => {
-          const itemId = String(item?.id ?? item?.campaignId ?? item?.campaign_id ?? '');
-          if (!itemId || seenIds.has(itemId)) {
-            return false;
-          }
-          seenIds.add(itemId);
-          return true;
-        });
-
-      return {
-        content,
-        last: pages.every((pageData) => Boolean(pageData?.last)),
-      };
-    },
-    [activeStoreIds]
-  );
-
-  const loadCampaignPage = useCallback(
-    async ({ silent = false } = {}) => {
-      if (!silent) {
-        setIsInitialLoading(true);
-      }
-      setCampaignError('');
-
-      try {
-        if (activeType === 'REQUEST' || activeType === 'INQUIRY') {
-          setCampaigns([]);
-          setPage(0);
-          setHasMore(false);
-          return;
-        }
-
-        if (activeType === 'MINE') {
-          if (activeMineDomain === 'REQUEST') {
-            setCampaigns([]);
-            setPage(0);
-            setHasMore(false);
-            return;
-          }
-
-          const mineQuery = {
-            page: 0,
-            size: PAGE_SIZE,
-          };
-
-          if (!token) {
-            setCampaigns([]);
-            setPage(0);
-            setHasMore(false);
-            setCampaignError(LABELS.loginRequiredForMine);
-            return;
-          }
-
-          const [hostedData, joinedData] = await Promise.all([
-            fetchMyHostedCampaigns(mineQuery, token),
-            fetchMyJoinedCampaigns(mineQuery, token),
-          ]);
-          const nextCampaigns = await attachCampaignChatAccess(
-            buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter),
-            token
-          );
-          const nextSignature = getCampaignListSignature(nextCampaigns);
-
-          if (nextSignature !== campaignsSignatureRef.current) {
-            setCampaigns(nextCampaigns);
-          }
-          setPage(0);
-          setHasMore(false);
-          return;
-        }
-
-        const data = await fetchCampaignsForSelectedStores({
-          page: 0,
-          size: PAGE_SIZE,
-          categoryId: activeCategory || undefined,
-          keyword: deferredSearch.trim() || undefined,
-        });
-
-        const items = Array.isArray(data?.content)
-          ? data.content.map(mapCampaign).filter((item) => canDisplayMarketCampaign(item, activeCampaignType, hideFullCampaigns))
-          : [];
-        const nextSignature = getCampaignListSignature(items);
-
-        if (nextSignature !== campaignsSignatureRef.current) {
-          setCampaigns(items);
-        }
-        setPage(0);
-        setHasMore(Boolean(data) && !data.last);
-      } catch (error) {
-        setCampaignError(error.message);
-        if (!silent) {
-          setCampaigns([]);
-          setHasMore(false);
-        }
-      } finally {
-        if (!silent) {
-          setIsInitialLoading(false);
-        }
-      }
-    },
-    [
-      activeCategory,
-      activeCampaignType,
-      activeMineDomain,
-      activeMyCampaignFilter,
-      activeMyCampaignScope,
-      activeType,
-      deferredSearch,
-      fetchCampaignsForSelectedStores,
-      hideFullCampaigns,
-      token,
-    ]
-  );
-
-  useEffect(() => {
-    void loadCampaignPage();
-  }, [loadCampaignPage, refreshKey]);
-
-  const refreshMineCampaignsBeforeOpen = useCallback(
-    async (deal) => {
-      if (activeType !== 'MINE' || !token || !deal?.id) {
-        return deal;
-      }
-
-      const mineQuery = {
-        page: 0,
-        size: PAGE_SIZE,
-      };
-      const [hostedData, joinedData] = await Promise.all([
-        fetchMyHostedCampaigns(mineQuery, token),
-        fetchMyJoinedCampaigns(mineQuery, token),
-      ]);
-      const nextCampaigns = await attachCampaignChatAccess(
-        buildMineCampaigns(hostedData, joinedData, activeMyCampaignScope, activeMyCampaignFilter),
-        token
-      );
-      const nextSignature = getCampaignListSignature(nextCampaigns);
-
-      if (nextSignature !== campaignsSignatureRef.current) {
-        setCampaigns(nextCampaigns);
-      }
-
-      return (
-        nextCampaigns.find((campaign) => Number(campaign.id) === Number(deal.id)) ??
-        deal
-      );
-    },
-    [activeMyCampaignFilter, activeMyCampaignScope, activeType, token]
-  );
+  }, [pushLiveNotification, setParticipationCampaign, token, wsUrl]);
 
   useEffect(() => {
     if (!isRefreshing) {
@@ -2072,53 +792,7 @@ function HomePage() {
       setIsRefreshing(false);
       setPullDistance(0);
     }
-  }, [isRefreshing, isReferenceLoading, isInitialLoading, isLoadingMore]);
-
-  useEffect(() => {
-    const node = sentinelRef.current;
-    if (!node || activeType === 'MINE' || activeType === 'REQUEST' || activeType === 'INQUIRY' || !hasMore || isInitialLoading || isLoadingMore) {
-      return undefined;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) {
-          return;
-        }
-
-        setIsLoadingMore(true);
-
-        fetchCampaignsForSelectedStores({
-          page: page + 1,
-          size: PAGE_SIZE,
-          categoryId: activeCategory || undefined,
-          keyword: deferredSearch.trim() || undefined,
-        })
-          .then((data) => {
-            const nextItems = Array.isArray(data?.content)
-              ? data.content
-                  .map((item, index) => mapCampaign(item, campaigns.length + index))
-                  .filter((item) => canDisplayMarketCampaign(item, activeCampaignType, hideFullCampaigns))
-              : [];
-
-            setCampaigns((current) => [...current, ...nextItems]);
-            setPage((current) => current + 1);
-            setHasMore(Boolean(data) && !data.last);
-          })
-          .catch((error) => {
-            setCampaignError(error.message);
-            setHasMore(false);
-          })
-          .finally(() => {
-            setIsLoadingMore(false);
-          });
-      },
-      { rootMargin: '200px 0px' }
-    );
-
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [activeCampaignType, activeCategory, activeType, campaigns.length, deferredSearch, fetchCampaignsForSelectedStores, hasMore, hideFullCampaigns, isInitialLoading, isLoadingMore, page]);
+  }, [isRefreshing, isReferenceLoading, isInitialLoading, isLoadingMore, setIsRefreshing, setPullDistance]);
 
   const openProfile = () => {
     setAuthError('');
@@ -2721,29 +1395,6 @@ function HomePage() {
     }
   };
 
-  const handleOpenCreateCampaign = (scenarioType = 'SCHEDULED') => {
-    if (!token) {
-      setIsLoginModalOpen(true);
-      setCreateCampaignError('');
-      return;
-    }
-
-    setCreateCampaignError('');
-    setCampaignForm((current) => ({
-      ...getInitialCampaignForm(),
-      storeId: current.storeId || stores[0]?.id?.toString() || '',
-      categoryId: current.categoryId || categories[0]?.id?.toString() || '',
-      scenarioType,
-      expirePreset: scenarioType === 'SCHEDULED' ? 'custom' : current.expirePreset || '10m',
-    }));
-    setIsCreateCampaignOpen(true);
-  };
-
-  const handleOpenCreateCampaignForCurrentType = () => {
-    const currentScenarioType = activeCampaignType === 'INSTANT' ? 'INSTANT' : 'SCHEDULED';
-    handleOpenCreateCampaign(currentScenarioType);
-  };
-
   const refreshHome = useCallback(() => {
     if (isRefreshing) {
       return;
@@ -2752,326 +1403,67 @@ function HomePage() {
     setIsRefreshing(true);
     setReferenceRefreshKey((current) => current + 1);
     setRefreshKey((current) => current + 1);
-  }, [isRefreshing]);
+  }, [isRefreshing, setIsRefreshing]);
 
-  const renderPageDots = () => (
-    <div className="swipe-page-indicator" aria-label="頁面位置：可左右滑動切換">
-      {swipeTabs.map((tab) => (
-        <span key={tab} className={tab === getNavigationTabValue(activeType) ? 'active' : ''}></span>
-      ))}
-    </div>
-  );
-
-  const switchActiveType = (nextType) => {
-    setIsNavigationOpen(false);
-    setActiveType((current) => {
-      const requestedType = typeof nextType === 'function' ? nextType(getNavigationTabValue(current)) : nextType;
-      if (requestedType === 'INSTANT' || requestedType === 'SCHEDULED') {
-        setActiveCampaignType(requestedType);
-      }
-      const resolvedType = getNavigationTabValue(requestedType) === 'CAMPAIGN' ? 'SCHEDULED' : requestedType;
-      if (!resolvedType || resolvedType === current) {
-        return current;
-      }
-
-      if (resolvedType !== 'REQUEST') {
-        setIsProxyRequestFormOpen(false);
-      }
-
-      const currentIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(current));
-      const nextIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(resolvedType));
-      setPageTransitionDirection(nextIndex >= currentIndex ? 'forward' : 'backward');
-      return resolvedType;
-    });
-  };
-
-  useEffect(() => {
-    if (!isNavigationOpen) {
-      return undefined;
-    }
-
-    const handleNavigationDismiss = (event) => {
-      if (event.key === 'Escape') {
-        setIsNavigationOpen(false);
-        return;
-      }
-
-      if (event.type === 'pointerdown' && !navigationRef.current?.contains(event.target)) {
-        setIsNavigationOpen(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handleNavigationDismiss);
-    document.addEventListener('keydown', handleNavigationDismiss);
-
-    return () => {
-      document.removeEventListener('pointerdown', handleNavigationDismiss);
-      document.removeEventListener('keydown', handleNavigationDismiss);
-    };
-  }, [isNavigationOpen]);
+  const {
+    switchActiveType,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleTouchCancel,
+    dealViewMode,
+    isCompactDealList,
+    isMineCompactList,
+    handleChangeDealViewMode,
+    focusMobileSearch,
+    handleOpenMobileSearch,
+    handleChangeMobileSearchScope,
+    handleCloseMobileSearch
+  } = useMainNavigation({
+    setIsNavigationOpen,
+    setActiveType,
+    setActiveCampaignType,
+    setIsProxyRequestFormOpen,
+    swipeTabs,
+    isNavigationOpen,
+    navigationRef,
+    swipeStartXRef,
+    pullStartYRef,
+    gestureLockRef,
+    canPullRef,
+    isRefreshing,
+    setPullDistance,
+    pullDistance,
+    refreshHome,
+    activeType,
+    isDesktopViewport,
+    activeMyCampaignScope,
+    dealViewModePreferences,
+    setDealViewModePreferences,
+    setExpandedCompactDealId,
+    mobileSearchInputRef,
+    searchReturnContextRef,
+    activeCampaignType,
+    setMobileSearchScope,
+    setIsSearchExpanded,
+    setSearch,
+  });
 
   useEffect(() => {
-    if (typeof document === 'undefined' || typeof window === 'undefined') {
-      return undefined;
+    const state = location.state;
+    if (!state?.activeType && !state?.focusCampaignId) return;
+    const { activeType: requestedType, focusCampaignId, ...remainingState } = state;
+    const target = focusCampaignId ? '/mine' : mainPath(requestedType);
+    if (focusCampaignId) {
+      setFocusedCampaignId(String(focusCampaignId));
+      setActiveMineDomain('CAMPAIGN');
+      setActiveMyCampaignScope('ALL');
+      setActiveMyCampaignFilter('ALL');
     }
-
-    if (activeType === 'MINE' || activeType === 'REQUEST' || activeType === 'INQUIRY') {
-      return undefined;
-    }
-
-    const refreshIntervalMs = activeCampaignType === 'SCHEDULED' ? 60000 : 15000;
-
-    const refreshIfVisible = () => {
-      if (document.visibilityState !== 'visible') {
-        return;
-      }
-
-      void loadCampaignPage({ silent: true });
-    };
-
-    const intervalId = window.setInterval(refreshIfVisible, refreshIntervalMs);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void loadCampaignPage({ silent: true });
-      }
-    };
-    const handleWindowFocus = () => {
-      refreshIfVisible();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleWindowFocus);
-
-    return () => {
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleWindowFocus);
-    };
-  }, [activeCampaignType, activeType, loadCampaignPage]);
-
-  const switchActiveTypeBySwipe = (direction) => {
-    if (window.innerWidth >= 700) {
-      return;
-    }
-
-    switchActiveType((current) => {
-      const currentIndex = swipeTabs.findIndex((value) => value === getNavigationTabValue(current));
-      if (currentIndex === -1) {
-        return current;
-      }
-
-      const nextIndex =
-        direction === 'left' ? Math.min(currentIndex + 1, swipeTabs.length - 1) : Math.max(currentIndex - 1, 0);
-
-      return swipeTabs[nextIndex] ?? current;
+    navigate({ pathname: target, search: location.search, hash: location.hash }, {
+      replace: true, state: remainingState,
     });
-  };
-
-  const handleTouchStart = (event) => {
-    const gestureTarget = event.target;
-    if (
-      gestureTarget instanceof Element &&
-      gestureTarget.closest('.category-strip, .category-select, .market-checkbox-filter, .store-selector, .search-box')
-    ) {
-      swipeStartXRef.current = null;
-      pullStartYRef.current = null;
-      gestureLockRef.current = '';
-      canPullRef.current = false;
-      return;
-    }
-
-    const touch = event.touches[0];
-    swipeStartXRef.current = touch?.clientX ?? null;
-    pullStartYRef.current = touch?.clientY ?? null;
-    gestureLockRef.current = '';
-
-    if (window.innerWidth >= 700 || window.scrollY > 0 || isRefreshing) {
-      canPullRef.current = false;
-      return;
-    }
-
-    canPullRef.current = true;
-  };
-
-  const handleTouchMove = (event) => {
-    const touch = event.touches[0];
-    if (!touch || swipeStartXRef.current == null || pullStartYRef.current == null) {
-      return;
-    }
-
-    const deltaX = touch.clientX - swipeStartXRef.current;
-    const deltaY = touch.clientY - pullStartYRef.current;
-    const absDeltaX = Math.abs(deltaX);
-    const absDeltaY = Math.abs(deltaY);
-
-    if (!gestureLockRef.current && (absDeltaX > 12 || absDeltaY > 12)) {
-      gestureLockRef.current = absDeltaX > absDeltaY ? 'horizontal' : 'vertical';
-      if (gestureLockRef.current === 'horizontal') {
-        canPullRef.current = false;
-        setPullDistance(0);
-      }
-    }
-
-    if (gestureLockRef.current !== 'vertical' || !canPullRef.current) {
-      return;
-    }
-
-    const delta = deltaY;
-    if (delta <= 0) {
-      setPullDistance(0);
-      return;
-    }
-
-    setPullDistance(Math.min(delta * 0.45, 84));
-  };
-
-  const handleTouchEnd = (event) => {
-    const startX = swipeStartXRef.current;
-    const startY = pullStartYRef.current;
-    const endTouch = event.changedTouches?.[0] ?? null;
-    const deltaX = startX != null && endTouch ? endTouch.clientX - startX : 0;
-    const deltaY = startY != null && endTouch ? endTouch.clientY - startY : 0;
-    const isHorizontalSwipe = Math.abs(deltaX) >= 48 && Math.abs(deltaX) > Math.abs(deltaY);
-
-    swipeStartXRef.current = null;
-    pullStartYRef.current = null;
-    gestureLockRef.current = '';
-
-    if (isHorizontalSwipe) {
-      switchActiveTypeBySwipe(deltaX < 0 ? 'left' : 'right');
-      canPullRef.current = false;
-      setPullDistance(0);
-      return;
-    }
-
-    if (!canPullRef.current) {
-      return;
-    }
-
-    canPullRef.current = false;
-
-    if (pullDistance >= 60) {
-      refreshHome();
-      return;
-    }
-
-    setPullDistance(0);
-  };
-
-  const handleTouchCancel = () => {
-    canPullRef.current = false;
-    swipeStartXRef.current = null;
-    pullStartYRef.current = null;
-    gestureLockRef.current = '';
-    setPullDistance(0);
-  };
-
-  const handleSubmitCreateCampaign = async () => {
-    if (!token) {
-      setCreateCampaignError('請先登入後再發起團購。');
-      return;
-    }
-
-    if (campaignForm.scenarioType === 'INSTANT') {
-      if (!isWithinHoduoBusinessHours()) {
-        showSuccessToast('營業時間提醒', '現在非營業時間，但仍可建立即時團。');
-      } else if (isHoduoClosingSoon()) {
-        showSuccessToast('營業時間提醒', '賣場即將打烊，請留意截止與面交時間。');
-      }
-    }
-
-    const requiredChecks = [
-      ['店面', campaignForm.storeId],
-      ['類別', campaignForm.categoryId],
-      ['團購類型', campaignForm.scenarioType],
-      ['商品名稱', campaignForm.itemName.trim()],
-      ['商品圖片', campaignForm.images.length > 0 ? 'ok' : ''],
-      ['單價', campaignForm.pricePerUnit],
-      ['總數量', campaignForm.productTotalQuantity],
-      ['待認購數量', campaignForm.openQuantity],
-      ['截止時間', campaignForm.expirePreset === 'custom' ? campaignForm.expireTime : campaignForm.expirePreset],
-      ['面交時間', campaignForm.meetupTime],
-      ['面交地點', campaignForm.meetupLocation.trim()],
-    ];
-
-    if (campaignForm.scenarioType !== 'INSTANT') {
-      requiredChecks[9][1] = 'ok';
-    }
-
-    const missingField = requiredChecks.find(([, value]) => !value);
-    if (missingField) {
-      setCreateCampaignError(`${missingField[0]}為必填`);
-      return;
-    }
-
-    if (campaignForm.images.length > 3) {
-      setCreateCampaignError('圖片最多只能上傳 3 張');
-      return;
-    }
-
-    if (campaignForm.expirePreset === 'custom' && !resolveExpireTime(campaignForm)) {
-      setCreateCampaignError('請選擇有效的截止時間');
-      return;
-    }
-
-    if (Number(campaignForm.openQuantity) > Number(campaignForm.productTotalQuantity)) {
-      setCreateCampaignError('待認購數量不能大於總數量');
-      return;
-    }
-
-    const expireDate = resolveExpireDate(campaignForm);
-    const meetupDate = parseLocalDateTime(campaignForm.meetupTime);
-    if (!expireDate || !meetupDate) {
-      setCreateCampaignError('\u8acb\u9078\u64c7\u6709\u6548\u7684\u622a\u6b62\u6642\u9593\u8207\u9762\u4ea4\u6642\u9593');
-      return;
-    }
-
-    if (meetupDate.getTime() < expireDate.getTime()) {
-      setCreateCampaignError('\u9762\u4ea4\u6642\u9593\u4e0d\u80fd\u65e9\u65bc\u622a\u6b62\u6642\u9593');
-      return;
-    }
-
-    setIsCreatingCampaign(true);
-    setCreateCampaignError('');
-
-    try {
-      const resolvedExpireTime = resolveExpireTime(campaignForm);
-      const payload = {
-        ...campaignForm,
-        expireTime: resolvedExpireTime,
-        storeId: Number(campaignForm.storeId),
-        categoryId: Number(campaignForm.categoryId),
-        pricePerUnit: Number(campaignForm.pricePerUnit),
-        productTotalQuantity: Number(campaignForm.productTotalQuantity),
-        openQuantity: Number(campaignForm.openQuantity),
-      };
-      delete payload.expirePreset;
-
-      await createCampaign(payload, token);
-
-      setIsCreateCampaignOpen(false);
-      switchActiveType(campaignForm.scenarioType);
-      setCampaignForm(getInitialCampaignForm());
-      setCreatedCampaignSummary({
-        itemName: payload.itemName,
-        scenarioType: payload.scenarioType,
-        storeName: stores.find((store) => store.id === payload.storeId)?.name || LABELS.noValue,
-        categoryName: categories.find((category) => category.id === payload.categoryId)?.name || LABELS.noValue,
-        productTotalQuantity: payload.productTotalQuantity,
-        openQuantity: payload.openQuantity,
-        pricePerUnit: payload.pricePerUnit,
-        expireTime: payload.expireTime,
-        meetupTime: payload.meetupTime,
-        meetupLocation: payload.meetupLocation,
-        imageCount: payload.images.length,
-      });
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setCreateCampaignError(error.message);
-    } finally {
-      setIsCreatingCampaign(false);
-    }
-  };
+  }, [location, navigate, setActiveMineDomain, setActiveMyCampaignFilter, setActiveMyCampaignScope, setFocusedCampaignId]);
 
   const handleLiveNotificationAction = async (notification) => {
     if (!notification) {
@@ -3107,256 +1499,62 @@ function HomePage() {
     }, 3600);
   };
 
-  const handleOpenJoinCampaign = (deal) => {
-    if (!token) {
-      setIsLoginModalOpen(true);
-      return;
-    }
+  const {
+    handleOpenCreateCampaignForCurrentType,
+    handleSubmitCreateCampaign,
+    handleOpenJoinCampaign,
+    handleCloseJoinCampaign,
+    handleSubmitJoinCampaign
+  } = useCampaignActions({
+    createdCampaignSummary,
+    createSummaryTimerRef,
+    setCreatedCampaignSummary,
+    setCampaignForm,
+    campaignForm,
+    token,
+    setIsLoginModalOpen,
+    setCreateCampaignError,
+    stores,
+    categories,
+    setIsCreateCampaignOpen,
+    activeCampaignType,
+    showSuccessToast,
+    setIsCreatingCampaign,
+    switchActiveType,
+    setRefreshKey,
+    setSelectedDealToJoin,
+    setPurchaseQuantity,
+    setPurchaseError,
+    isSubmittingPurchase,
+    selectedDealToJoin,
+    purchaseQuantity,
+    setIsSubmittingPurchase,
+    setCampaigns,
+    setMarketCampaigns,
+    hideFullCampaigns
+  });
 
-    setSelectedDealToJoin(deal);
-    setPurchaseQuantity(deal.availableQuantity > 0 ? '1' : '0');
-    setPurchaseError('');
-  };
-
-  const handleCloseJoinCampaign = () => {
-    if (isSubmittingPurchase) {
-      return;
-    }
-
-    setSelectedDealToJoin(null);
-    setPurchaseQuantity('1');
-    setPurchaseError('');
-  };
-
-  const handleSubmitJoinCampaign = async () => {
-    if (!selectedDealToJoin) {
-      return;
-    }
-
-    const normalizedQuantity = Number(purchaseQuantity);
-    if (!Number.isInteger(normalizedQuantity)) {
-      setPurchaseError('\u8acb\u8f38\u5165\u6b63\u6574\u6578\u7684\u8a8d\u8cfc\u6578\u91cf');
-      return;
-    }
-
-    if (normalizedQuantity <= 0) {
-      setPurchaseError('\u8a8d\u8cfc\u6578\u91cf\u4e0d\u80fd\u70ba 0 \u6216\u8ca0\u6578');
-      return;
-    }
-
-    if (normalizedQuantity > selectedDealToJoin.availableQuantity) {
-      setPurchaseError('\u8a8d\u8cfc\u6578\u91cf\u4e0d\u80fd\u8d85\u904e\u5f85\u8a8d\u8cfc\u6578\u91cf');
-      return;
-    }
-
-    setIsSubmittingPurchase(true);
-    setPurchaseError('');
-
-    try {
-      const joinResponse = await joinCampaign(
-        selectedDealToJoin.id,
-        { quantity: normalizedQuantity },
-        token
-      );
-
-      setCampaigns((current) => {
-        const nextCampaigns = current.map((campaign) =>
-          campaign.id === selectedDealToJoin.id
-            ? {
-                ...campaign,
-                availableQuantity:
-                  joinResponse?.availableQuantity ??
-                  joinResponse?.available_quantity ??
-                  campaign.availableQuantity - normalizedQuantity,
-              }
-            : campaign
-        );
-
-        return activeType === 'MINE'
-          ? nextCampaigns
-          : nextCampaigns.filter((campaign) => canDisplayMarketCampaign(campaign, activeCampaignType, hideFullCampaigns));
-      });
-      setSelectedDealToJoin(null);
-      setPurchaseQuantity('1');
-      setPurchaseError('');
-      showSuccessToast('已加入團購', `認購 ${normalizedQuantity} 件，請留意後續通知。`);
-    } catch (error) {
-      setPurchaseError(error.message);
-    } finally {
-      setIsSubmittingPurchase(false);
-    }
-  };
-
-  const patchCampaignImages = (campaignId, images, imageOrderNames) => {
-    const applyImageOrder = (campaign) =>
-      campaign && Number(campaign.id ?? campaign.campaignId) === Number(campaignId)
-        ? {
-            ...campaign,
-            imageUrls: images,
-            imageRefs: imageOrderNames,
-            image: images[0] ?? campaign.image,
-          }
-        : campaign;
-
-    setCampaigns((current) => current.map(applyImageOrder));
-    setChatCampaign((current) => (current ? applyImageOrder(current) : current));
-    setParticipationCampaign((current) => (current ? applyImageOrder(current) : current));
-  };
-
-  const handleOpenGallery = (deal, startIndex = 0) => {
-    const images = (Array.isArray(deal.imageUrls) && deal.imageUrls.length > 0 ? deal.imageUrls : [deal.image]).filter(Boolean);
-    const orderNames = getCampaignImageOrderNames({ ...deal, imageUrls: images }, images);
-    const canReorder = canReorderCampaignImages({ ...deal, imageUrls: images }, user);
-
-    setGalleryState({
-      isOpen: true,
-      title: deal.itemName,
-      campaignId: deal.id ?? deal.campaignId ?? null,
-      images,
-      imageOrderNames: canReorder ? orderNames : [],
-      originalImageOrderNames: canReorder ? orderNames : [],
-      activeIndex: Math.min(Math.max(startIndex, 0), images.length - 1),
-      canReorder,
-      hasOrderChanges: false,
-      isSavingOrder: false,
-      orderMessage: '',
-      orderError: '',
-    });
-  };
-
-  const handleOpenImageOrderFromParticipation = (campaign) => {
-    if (!campaign) {
-      return;
-    }
-
-    handleOpenGallery(campaign, 0);
-    setParticipationCampaign(null);
-    setParticipationQuantityDraft('1');
-    setParticipationError('');
-  };
-
-  const handleCloseGallery = () => {
-    setGalleryState((current) => ({
-      ...current,
-      isOpen: false,
-    }));
-  };
-
-  const handleSelectGalleryImage = (nextIndex) => {
-    setGalleryState((current) => ({
-      ...current,
-      activeIndex: nextIndex,
-    }));
-  };
-
-  const handleStepGallery = (direction) => {
-    setGalleryState((current) => {
-      if (!current.images.length) {
-        return current;
-      }
-
-      const step = direction === 'next' ? 1 : -1;
-      const nextIndex = (current.activeIndex + step + current.images.length) % current.images.length;
-
-      return {
-        ...current,
-        activeIndex: nextIndex,
-      };
-    });
-  };
-
-  const handleMoveGalleryImage = (fromIndex, toIndex) => {
-    setGalleryState((current) => {
-      if (!current.canReorder || current.isSavingOrder) {
-        return current;
-      }
-
-      const nextImages = reorderList(current.images, fromIndex, toIndex);
-      const nextOrderNames = reorderList(current.imageOrderNames, fromIndex, toIndex);
-
-      if (nextImages === current.images || nextOrderNames === current.imageOrderNames) {
-        return current;
-      }
-
-      return {
-        ...current,
-        images: nextImages,
-        imageOrderNames: nextOrderNames,
-        activeIndex: toIndex,
-        hasOrderChanges: !areStringArraysEqual(nextOrderNames, current.originalImageOrderNames),
-        orderMessage: '',
-        orderError: '',
-      };
-    });
-  };
-
-  const handleMoveGalleryImageToFront = (fromIndex) => {
-    handleMoveGalleryImage(fromIndex, 0);
-  };
-
-  const handleSaveGalleryImageOrder = async () => {
-    const {
-      campaignId,
-      images,
-      imageOrderNames,
-      canReorder,
-      hasOrderChanges,
-      isSavingOrder,
-    } = galleryState;
-
-    if (!canReorder || !hasOrderChanges || isSavingOrder || !campaignId) {
-      return;
-    }
-
-    if (!token) {
-      setGalleryState((current) => ({
-        ...current,
-        orderError: '請先登入後再儲存圖片順序。',
-      }));
-      setIsLoginModalOpen(true);
-      return;
-    }
-
-    if (imageOrderNames.length !== images.length || imageOrderNames.some((name) => !name)) {
-      setGalleryState((current) => ({
-        ...current,
-        orderError: '圖片資料不完整，請重新整理後再試一次。',
-      }));
-      return;
-    }
-
-    setGalleryState((current) => ({
-      ...current,
-      isSavingOrder: true,
-      orderMessage: '',
-      orderError: '',
-    }));
-
-    try {
-      const response = await updateCampaignImageOrder(campaignId, imageOrderNames, token);
-
-      patchCampaignImages(campaignId, images, imageOrderNames);
-      setGalleryState((current) =>
-        Number(current.campaignId) === Number(campaignId)
-          ? {
-              ...current,
-              originalImageOrderNames: imageOrderNames,
-              hasOrderChanges: false,
-              isSavingOrder: false,
-              orderMessage: response?.message ?? '圖片順序已成功更新',
-              orderError: '',
-            }
-          : current
-      );
-      showSuccessToast('圖片順序已更新', '新的封面與排序已儲存。');
-    } catch (error) {
-      setGalleryState((current) => ({
-        ...current,
-        isSavingOrder: false,
-        orderError: error instanceof Error ? error.message : '圖片順序更新失敗',
-      }));
-    }
-  };
+  const {
+    galleryState,
+    handleOpenGallery,
+    handleOpenImageOrderFromParticipation,
+    handleCloseGallery,
+    handleSelectGalleryImage,
+    handleStepGallery,
+    handleMoveGalleryImage,
+    handleMoveGalleryImageToFront,
+    handleSaveGalleryImageOrder
+  } = useCampaignGallery({
+    setCampaigns,
+    setChatCampaign,
+    setParticipationCampaign,
+    user,
+    setParticipationQuantityDraft,
+    setParticipationError,
+    token,
+    setIsLoginModalOpen,
+    showSuccessToast,
+  });
 
   const handleOpenUserProfile = (profileUser, source = 'card') => {
     if (!profileUser?.id) {
@@ -3368,6 +1566,7 @@ function HomePage() {
       JSON.stringify({
         source,
         scrollY: window.scrollY,
+        path: location.pathname,
         ui: {
           activeType,
           activeCampaignType,
@@ -3433,11 +1632,6 @@ function HomePage() {
     return true;
   };
 
-  const handleSubmitProxyPurchaseRequest = (event) => {
-    event.preventDefault();
-    setRequestDraftMessage('表單已在前端建立，尚未串接 API。');
-  };
-
   const handleOpenParticipationFromChat = async (deal) => {
     await handleOpenParticipation(deal);
     chatReturnContextRef.current = null;
@@ -3495,1100 +1689,150 @@ function HomePage() {
     restoreChatReturnContext();
   };
 
-  const handleOpenReview = (target) => {
-    if (!token) {
-      setIsLoginModalOpen(true);
-      return;
-    }
+  const {
+    handleOpenReview,
+    handleCloseReview,
+    handleReviewSubmitted,
+    handleOpenParticipation,
+    handleCloseParticipation,
+    handleConfirmCampaignReceipt,
+    handleDeliverCampaign,
+    handleRaiseCampaignDispute,
+    handleCampaignStatusChange,
+    handleUnlockCampaign,
+    handleParticipantStatusAction,
+    handleSubmitParticipation,
+    handleWithdrawParticipation,
+    handleCancelHostedCampaign
+  } = useParticipationActions({
+    token,
+    setIsLoginModalOpen,
+    setReviewTarget,
+    setReviewedReviewKeys,
+    setChatReviewState,
+    participationCampaign,
+    reviewedReviewKeys,
+    user,
+    chatCampaign,
+    setParticipationError,
+    setParticipationCampaign,
+    setParticipationQuantityDraft,
+    refreshMineCampaignsBeforeOpen,
+    isSubmittingParticipation,
+    setCampaigns,
+    setChatCampaign,
+    setChatStatusEvent,
+    campaigns,
+    setCampaignError,
+    findCampaignForNotification,
+    liveNotifications,
+    lastHandledChatNotificationRef,
+    setIsSubmittingParticipation,
+    setRefreshKey,
+    participationQuantityDraft
+  });
 
-    setReviewTarget(target ?? null);
+  // Presentation props stay here while page state and API flows retain their existing lifecycle.
+  const campaignListProps = {
+    isCompactDealList,
+    isMineCompactList,
+    isReferenceLoading,
+    referenceError,
+    campaignError,
+    isInitialLoading,
+    campaigns,
+    expandedCompactDealId,
+    focusedCampaignId,
+    uiLabels,
+    setExpandedCompactDealId,
+    handleOpenGallery,
+    handleOpenUserProfile,
+    activeType,
+    countdownNow,
+    handleOpenJoinCampaign,
+    canOpenCampaignChat,
+    handleOpenChat,
+    handleOpenParticipation,
+    isSameUserId,
+    user,
+    sentinelRef,
+    isLoadingMore,
+    hasMore,
   };
-
-  const handleCloseReview = () => {
-    setReviewTarget(null);
+  const legacyRequestFormProps = {
+    isProxyRequestFormOpen,
+    setIsProxyRequestFormOpen,
+    handleSubmitProxyPurchaseRequest,
+    requestRewardMethod,
+    setRequestRewardMethod,
+    requestDeliveryMethod,
+    setRequestDeliveryMethod,
+    requestCompletionTimeMode,
+    setRequestCompletionTimeMode,
+    requestDeadlineMode,
+    setRequestDeadlineMode,
+    requestDraftMessage,
   };
-
-  const handleReviewSubmitted = (target) => {
-    if (target?.campaignId != null && target?.revieweeId != null) {
-      setReviewedReviewKeys((current) => ({
-        ...current,
-        [getReviewKey(target.campaignId, target.revieweeId)]: true,
-      }));
-
-      setChatReviewState((current) => {
-        if (target.source === 'participant') {
-          return {
-            ...current,
-            isParticipantReviewed: true,
-          };
-        }
-
-        if (target.source === 'host') {
-          const participants = Array.isArray(participationCampaign?.dashboard?.participants)
-            ? participationCampaign.dashboard.participants
-            : [];
-          const nextReviewedKeys = {
-            ...reviewedReviewKeys,
-            [getReviewKey(target.campaignId, target.revieweeId)]: true,
-          };
-          const reviewableParticipants = participants.filter((participant) => participant.userId != null);
-
-          return {
-            ...current,
-            isHostAllReviewed:
-              reviewableParticipants.length > 0 &&
-              reviewableParticipants.every((participant) =>
-                Boolean(nextReviewedKeys[getReviewKey(target.campaignId, participant.userId)])
-              ),
-          };
-        }
-
-        return current;
-      });
-    }
-
-    handleCloseReview();
-  };
-
-  const loadReviewStatusesForCampaign = useCallback(
-    async (campaign) => {
-      if (!token || !campaign?.id) {
-        return;
-      }
-
-      const isHostCampaign = isSameUserId(campaign.host?.id, user?.id) || campaign.isHost;
-
-      if (isHostCampaign) {
-        const dashboard = campaign.dashboard?.participants ? campaign.dashboard : await fetchHostDashboard(campaign.id, token);
-        const participants = Array.isArray(dashboard?.participants)
-          ? dashboard.participants.map((participant, index) => normalizeHostParticipant(participant, index))
-          : [];
-        const reviewableParticipants = participants.filter((participant) => participant.userId != null);
-
-        if (reviewableParticipants.length === 0) {
-          setChatReviewState((current) => ({
-            ...current,
-            isHostAllReviewed: false,
-          }));
-          return;
-        }
-
-        const results = await Promise.all(
-          reviewableParticipants.map(async (participant) => {
-            try {
-              const data = await checkReviewStatus(campaign.id, participant.userId, token);
-              return {
-                key: getReviewKey(campaign.id, participant.userId),
-                reviewed: isReviewAlreadyCompleted(data),
-              };
-            } catch {
-              return {
-                key: getReviewKey(campaign.id, participant.userId),
-                reviewed: false,
-              };
-            }
-          })
-        );
-
-        setReviewedReviewKeys((current) => {
-          const next = { ...current };
-          results.forEach((result) => {
-            next[result.key] = result.reviewed;
-          });
-          return next;
-        });
-        setChatReviewState((current) => ({
-          ...current,
-          isHostAllReviewed: results.length > 0 && results.every((result) => result.reviewed),
-        }));
-        return;
-      }
-
-      if (campaign.host?.id == null) {
-        return;
-      }
-
-      try {
-        const data = await checkReviewStatus(campaign.id, campaign.host.id, token);
-        const reviewed = isReviewAlreadyCompleted(data);
-        setReviewedReviewKeys((current) => ({
-          ...current,
-          [getReviewKey(campaign.id, campaign.host.id)]: reviewed,
-        }));
-        setChatReviewState((current) => ({
-          ...current,
-          isParticipantReviewed: reviewed,
-        }));
-      } catch {
-        setChatReviewState((current) => ({
-          ...current,
-          isParticipantReviewed: false,
-        }));
-      }
-    },
-    [token, user?.id]
-  );
-
-  useEffect(() => {
-    if (!chatCampaign) {
-      setChatReviewState({
-        isParticipantReviewed: false,
-        isHostAllReviewed: false,
-      });
-      return;
-    }
-
-    void loadReviewStatusesForCampaign(chatCampaign);
-  }, [chatCampaign?.id, chatCampaign?.status, loadReviewStatusesForCampaign]);
-
-  useEffect(() => {
-    if (!participationCampaign || participationCampaign.managementMode !== 'HOST') {
-      return;
-    }
-
-    void loadReviewStatusesForCampaign(participationCampaign);
-  }, [loadReviewStatusesForCampaign, participationCampaign?.id, participationCampaign?.managementMode, participationCampaign?.status]);
-
-  const handleOpenParticipation = async (deal) => {
-    if (!token) {
-      setIsLoginModalOpen(true);
-      return;
-    }
-
-    setParticipationError('');
-
-    const openParticipationFromDeal = (nextDeal) => {
-      const readonlyQuantity = Number(
-        nextDeal?.quantity ??
-          nextDeal?.joinQuantity ??
-          nextDeal?.join_quantity ??
-          nextDeal?.joinedQuantity ??
-          nextDeal?.joined_quantity ??
-          0
-      );
-
-      setParticipationCampaign({
-        ...nextDeal,
-        managementMode: 'JOINED',
-        isHost: false,
-        joined: true,
-        quantity: readonlyQuantity,
-        isReadonlyParticipation: canOpenReadonlyParticipationFromDeal(nextDeal),
-      });
-      setParticipationQuantityDraft(String(readonlyQuantity));
-    };
-
-    try {
-      const nextDeal = await refreshMineCampaignsBeforeOpen(deal);
-      const isHostDeal = isSameUserId(nextDeal.host?.id, user?.id) || nextDeal.isHost;
-
-      if (isHostDeal) {
-        const [dashboard, participation] = await Promise.all([
-          fetchHostDashboard(nextDeal.id, token),
-          fetchMyParticipation(nextDeal.id, token),
-        ]);
-        const nextCampaign = {
-          ...buildHostParticipationCampaign(nextDeal, dashboard),
-          chatAccess: getCampaignChatAccess(participation),
-        };
-
-        setParticipationCampaign(nextCampaign);
-        setParticipationQuantityDraft(String(nextCampaign.hostReservedQuantity));
-        return;
-      }
-
-      openParticipationFromDeal(nextDeal);
-
-      const participation = await fetchMyParticipation(nextDeal.id, token);
-      const participantStatus = (
-        participation?.myParticipantStatus ??
-        participation?.my_participant_status ??
-        nextDeal?.myParticipantStatus ??
-        nextDeal?.my_participant_status ??
-        participation?.participantStatus ??
-        participation?.participant_status ??
-        ''
-      )
-        .toString()
-        .toUpperCase();
-      const mergedDeal = {
-        ...nextDeal,
-        chatAccess: getCampaignChatAccess(participation),
-        managementMode: 'JOINED',
-        isHost: Boolean(participation?.host ?? nextDeal.isHost),
-        myParticipantStatus: participantStatus || nextDeal?.myParticipantStatus || '',
-        isReadonlyParticipation:
-          getMineCampaignBucket({
-            ...nextDeal,
-            myParticipantStatus: participantStatus || nextDeal?.myParticipantStatus || '',
-            participantStatus,
-            quantity:
-              participation?.quantity ??
-              participation?.joinedQuantity ??
-              participation?.joined_quantity ??
-              nextDeal.quantity ??
-              nextDeal.joinQuantity ??
-              nextDeal.join_quantity ??
-              0,
-          }) === 'COMPLETED',
-        joined: participantStatus
-          ? isViewableParticipantStatus(participantStatus)
-          : Boolean(participation?.joined ?? nextDeal.joined ?? Number(nextDeal.quantity) > 0),
-        quantity: Number(
-          participation?.quantity ??
-            participation?.joinedQuantity ??
-            participation?.joined_quantity ??
-            nextDeal.quantity ??
-            nextDeal.joinQuantity ??
-            nextDeal.join_quantity ??
-            0
-        ),
-      };
-
-      if (mergedDeal.isHost || !mergedDeal.joined || mergedDeal.quantity <= 0) {
-        setParticipationError('目前沒有可調整的認購紀錄');
-        return;
-      }
-
-      setParticipationCampaign(mergedDeal);
-      setParticipationQuantityDraft(String(mergedDeal.quantity));
-    } catch (error) {
-      setParticipationError(error.message);
-    }
-  };
-
-  const handleCloseParticipation = () => {
-    if (isSubmittingParticipation) {
-      return;
-    }
-
-    setParticipationCampaign(null);
-    setParticipationQuantityDraft('1');
-    setParticipationError('');
-  };
-
-  const handleConfirmCampaignReceipt = async (campaignId) => {
-    if (!token) {
-      return { success: false, message: '請先登入後再確認收貨' };
-    }
-
-    try {
-      const response = await confirmCampaignReceipt(campaignId, token);
-
-      setCampaigns((current) =>
-        current.map((campaign) =>
-          Number(campaign.id) === Number(campaignId)
-            ? {
-                ...campaign,
-                status: 'CONFIRMED',
-              }
-            : campaign
-        )
-      );
-
-      setParticipationCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              status: 'CONFIRMED',
-            }
-          : current
-      );
-
-      return {
-        success: true,
-        message: response?.message ?? '已確認收到商品',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : '確認收到失敗',
-      };
-    }
-  };
-
-  const handleDeliverCampaign = async (campaignId) => {
-    if (!token) {
-      return { success: false, message: '請先登入後再標記已面交' };
-    }
-
-    try {
-      const response = await deliverCampaign(campaignId, token);
-
-      setCampaigns((current) =>
-        current.map((campaign) =>
-          Number(campaign.id) === Number(campaignId)
-            ? {
-                ...campaign,
-                status: 'DELIVERED',
-              }
-            : campaign
-        )
-      );
-
-      setChatCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              status: 'DELIVERED',
-            }
-          : current
-      );
-
-      setParticipationCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              status: 'DELIVERED',
-              dashboard: current.dashboard
-                ? {
-                    ...current.dashboard,
-                    status: 'DELIVERED',
-                  }
-                : current.dashboard,
-            }
-          : current
-      );
-
-      return {
-        success: true,
-        message: response?.message ?? '已標記面交完成',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : '標記面交失敗',
-      };
-    }
-  };
-
-  const handleRaiseCampaignDispute = async (campaignId, reason) => {
-    if (!token) {
-      return { success: false, message: '請先登入後再提出仲裁' };
-    }
-
-    try {
-      const response = await raiseCampaignDispute(campaignId, token, reason);
-
-      setCampaigns((current) =>
-        current.map((campaign) =>
-          Number(campaign.id) === Number(campaignId)
-            ? {
-                ...campaign,
-                myParticipantStatus: 'DISPUTED',
-              }
-            : campaign
-        )
-      );
-
-      setChatCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              myParticipantStatus: 'DISPUTED',
-            }
-          : current
-      );
-
-      setParticipationCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              myParticipantStatus: 'DISPUTED',
-            }
-          : current
-      );
-
-      return {
-        success: true,
-        message: response?.message ?? '已提出仲裁',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : '提出仲裁失敗',
-      };
-    }
-  };
-
-  const handleCampaignStatusChange = useCallback(
-    async ({ campaignId, status, message, source = '' }) => {
-      if (!campaignId || !status) {
-        return;
-      }
-
-      const normalizedStatus = status.toString().toUpperCase();
-      const applyStatus = (campaign) =>
-        Number(campaign?.id) === Number(campaignId)
-          ? {
-              ...campaign,
-              status: normalizedStatus,
-              campaignStatus: normalizedStatus,
-              dashboard: campaign.dashboard
-                ? {
-                    ...campaign.dashboard,
-                    status: normalizedStatus,
-                  }
-                : campaign.dashboard,
-            }
-          : campaign;
-
-      setCampaigns((current) => current.map(applyStatus));
-      setChatCampaign((current) => (current ? applyStatus(current) : current));
-      setParticipationCampaign((current) => (current ? applyStatus(current) : current));
-
-      if (message && source !== 'topic') {
-        setChatStatusEvent({
-          id: `${campaignId}-${normalizedStatus}-${Date.now()}`,
-          campaignId,
-          status: normalizedStatus,
-          message,
-        });
-      }
-
-      if (!token) {
-        return;
-      }
-
-      const currentCampaign =
-        chatCampaign && Number(chatCampaign.id) === Number(campaignId)
-          ? chatCampaign
-          : participationCampaign && Number(participationCampaign.id) === Number(campaignId)
-            ? participationCampaign
-            : campaigns.find((campaign) => Number(campaign.id) === Number(campaignId));
-      const isHostCampaign = isSameUserId(currentCampaign?.host?.id, user?.id) || currentCampaign?.isHost;
-
-      try {
-        if (isHostCampaign) {
-          const [dashboard, participation] = await Promise.all([
-            fetchHostDashboard(campaignId, token),
-            fetchMyParticipation(campaignId, token),
-          ]);
-          const normalizedDashboard = normalizeHostDashboard(dashboard);
-          const nextChatAccess = getCampaignChatAccess(participation);
-
-          setChatCampaign((current) =>
-            current && Number(current.id) === Number(campaignId)
-              ? {
-                  ...current,
-                  status: normalizedDashboard.status || normalizedStatus,
-                  dashboard: normalizedDashboard,
-                  chatAccess: nextChatAccess,
-                }
-              : current
-          );
-          setParticipationCampaign((current) =>
-            current && Number(current.id) === Number(campaignId)
-              ? {
-                  ...buildHostParticipationCampaign({
-                    ...current,
-                    status: normalizedDashboard.status || normalizedStatus,
-                  }, dashboard),
-                  chatAccess: nextChatAccess,
-                }
-              : current
-          );
-          setParticipationQuantityDraft(String(normalizedDashboard.hostReservedQuantity));
-          return;
-        }
-
-        const participation = await fetchMyParticipation(campaignId, token);
-        const participantStatus = (
-          participation?.myParticipantStatus ??
-          participation?.my_participant_status ??
-          participation?.participantStatus ??
-          participation?.participant_status ??
-          ''
-        )
-          .toString()
-          .toUpperCase();
-        const joinedQuantity = Number(
-          participation?.quantity ??
-            participation?.joinedQuantity ??
-            participation?.joined_quantity ??
-            0
-        );
-        const participantPatch = {
-          status: normalizedStatus,
-          campaignStatus: normalizedStatus,
-          myParticipantStatus: participantStatus,
-          participantStatus,
-          chatAccess: getCampaignChatAccess(participation),
-          joined: participantStatus ? isViewableParticipantStatus(participantStatus) : Boolean(participation?.joined),
-          quantity: joinedQuantity,
-        };
-
-        setChatCampaign((current) =>
-          current && Number(current.id) === Number(campaignId)
-            ? {
-                ...current,
-                ...participantPatch,
-              }
-            : current
-        );
-        setParticipationCampaign((current) =>
-          current && Number(current.id) === Number(campaignId)
-            ? {
-                ...current,
-                ...participantPatch,
-                managementMode: current.managementMode ?? 'JOINED',
-              }
-            : current
-        );
-        setParticipationQuantityDraft((current) => (joinedQuantity > 0 ? String(joinedQuantity) : current));
-      } catch (error) {
-        setCampaignError(error instanceof Error ? error.message : '團購狀態刷新失敗');
-      }
-    },
-    [campaigns, chatCampaign, participationCampaign, token, user?.id]
-  );
-
-  const refreshOpenChatCampaign = useCallback(
-    async (campaignId, message = '') => {
-      if (!campaignId || !token) {
-        return;
-      }
-
-      const latestCampaign = await findCampaignForNotification(campaignId, { forceRemote: true });
-      if (!latestCampaign) {
-        return;
-      }
-
-      setCampaigns((current) =>
-        current.map((campaign) =>
-          Number(campaign.id) === Number(campaignId)
-            ? {
-                ...campaign,
-                ...latestCampaign,
-              }
-            : campaign
-        )
-      );
-      setChatCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              ...latestCampaign,
-            }
-          : current
-      );
-      setParticipationCampaign((current) =>
-        current && Number(current.id) === Number(campaignId)
-          ? {
-              ...current,
-              ...latestCampaign,
-            }
-          : current
-      );
-
-      if (message) {
-        setChatStatusEvent({
-          id: `${campaignId}-notification-${Date.now()}`,
-          campaignId,
-          status: latestCampaign.status ?? latestCampaign.campaignStatus ?? '',
-          message,
-        });
-      }
-
-      try {
-        const participation = await fetchMyParticipation(campaignId, token);
-        const nextChatAccess = getCampaignChatAccess(participation);
-
-        if (isSameUserId(latestCampaign.host?.id, user?.id) || latestCampaign.isHost) {
-          setChatCampaign((current) =>
-            current && Number(current.id) === Number(campaignId)
-              ? { ...current, chatAccess: nextChatAccess }
-              : current
-          );
-        } else {
-          const participantStatus = (
-            participation?.myParticipantStatus ??
-            participation?.my_participant_status ??
-            participation?.participantStatus ??
-            participation?.participant_status ??
-            latestCampaign.myParticipantStatus ??
-            ''
-          )
-            .toString()
-            .toUpperCase();
-          const joinedQuantity = Number(
-            participation?.quantity ??
-              participation?.joinedQuantity ??
-              participation?.joined_quantity ??
-              latestCampaign.quantity ??
-              0
-          );
-
-          setChatCampaign((current) =>
-            current && Number(current.id) === Number(campaignId)
-              ? {
-                  ...current,
-                  myParticipantStatus: participantStatus,
-                  participantStatus,
-                  chatAccess: nextChatAccess,
-                  joined: participantStatus ? isViewableParticipantStatus(participantStatus) : current.joined,
-                  quantity: joinedQuantity || current.quantity,
-                }
-              : current
-          );
-        }
-      } catch {
-        // The latest campaign payload is still enough to update status-driven chat actions.
-      }
-    },
-    [findCampaignForNotification, token, user?.id]
-  );
-
-  const latestLiveNotification = liveNotifications[0] ?? null;
-
-  useEffect(() => {
-    if (!latestLiveNotification?.referenceId || !chatCampaign?.id) {
-      return;
-    }
-
-    if (Number(latestLiveNotification.referenceId) !== Number(chatCampaign.id)) {
-      return;
-    }
-
-    const notificationKey =
-      latestLiveNotification.id ??
-      `${latestLiveNotification.type}-${latestLiveNotification.referenceId}-${latestLiveNotification.createdAt}`;
-    if (lastHandledChatNotificationRef.current === notificationKey) {
-      return;
-    }
-    lastHandledChatNotificationRef.current = notificationKey;
-
-    const statusByNotificationType = {
-      CAMPAIGN_FULL: 'FULL',
-      CAMPAIGN_DELIVERED: 'DELIVERED',
-      CAMPAIGN_COMPLETED: 'COMPLETED',
-      CAMPAIGN_CANCELLED: 'CANCELLED',
-    };
-    const nextStatus = statusByNotificationType[latestLiveNotification.type];
-
-    if (!nextStatus) {
-      void refreshOpenChatCampaign(latestLiveNotification.referenceId, latestLiveNotification.content);
-      return;
-    }
-
-    void handleCampaignStatusChange({
-      campaignId: latestLiveNotification.referenceId,
-      status: nextStatus,
-      message: latestLiveNotification.content,
-      source: 'notification',
-    });
-    void refreshOpenChatCampaign(latestLiveNotification.referenceId);
-  }, [chatCampaign?.id, handleCampaignStatusChange, latestLiveNotification, refreshOpenChatCampaign]);
-
-  const refreshHostParticipationCampaign = async (campaignId) => {
-    const dashboard = await fetchHostDashboard(campaignId, token);
-
-    setParticipationCampaign((current) => {
-      if (!current || current.id !== campaignId) {
-        return current;
-      }
-
-      return buildHostParticipationCampaign(current, dashboard);
-    });
-
-    const normalizedDashboard = normalizeHostDashboard(dashboard);
-    setParticipationQuantityDraft(String(normalizedDashboard.hostReservedQuantity));
-    return normalizedDashboard;
-  };
-
-  const handleUnlockCampaign = async (campaignId) => {
-    if (!token || !campaignId) {
-      return {
-        success: false,
-        message: '缺少團購或登入資訊，無法開啟修改。',
-      };
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      const response = await unlockCampaignRevision(campaignId, token);
-      await refreshHostParticipationCampaign(campaignId);
-      setRefreshKey((current) => current + 1);
-
-      return {
-        success: true,
-        message: response?.message ?? '已開啟滿單後修改',
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '開啟滿單後修改失敗';
-      setParticipationError(message);
-      return {
-        success: false,
-        message,
-      };
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const _handleKickParticipant = async (participant) => {
-    const campaignId = participationCampaign?.id;
-    const participantId = participant?.participantId ?? participant?.userId ?? participant?.id ?? null;
-    const campaignStatus = (participationCampaign?.dashboard?.status ?? participationCampaign?.status ?? '').toString().toUpperCase();
-    const reason = campaignStatus === 'DELIVERED' ? '找不到人' : undefined;
-
-    if (!token || !campaignId || !participantId) {
-      setParticipationError('缺少團員資訊，無法剔除。');
-      return;
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      await kickCampaignParticipant(campaignId, participantId, token, reason);
-      await refreshHostParticipationCampaign(campaignId);
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setParticipationError(error instanceof Error ? error.message : '剔除團員失敗');
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const handleParticipantStatusAction = async (payload) => {
-    const participant = payload?.participant ?? payload;
-    const inputReason = payload?.reason ?? '';
-    const campaignId = participationCampaign?.id;
-    const participantId =
-      participant?.participantId ??
-      participant?.participantsId ??
-      participant?.participants_id ??
-      participant?.id ??
-      null;
-    const userId = participant?.userId ?? participant?.user_id ?? participant?.memberId ?? null;
-    const campaignStatus = (participationCampaign?.dashboard?.status ?? participationCampaign?.status ?? '')
-      .toString()
-      .toUpperCase();
-    const reason = inputReason.trim();
-
-    if (!token || !campaignId || (campaignStatus === 'DELIVERED' ? !userId : !participantId)) {
-      setParticipationError('缺少成員資訊，無法處理。');
-      return;
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      if (campaignStatus === 'DELIVERED') {
-        await markParticipantNoShow(campaignId, userId, token, reason || '找不到人');
-      } else {
-        await kickCampaignParticipant(campaignId, participantId, token, reason || undefined);
-      }
-
-      await refreshHostParticipationCampaign(campaignId);
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setParticipationError(error instanceof Error ? error.message : '處理成員狀態失敗');
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const handleSubmitParticipation = async () => {
-    if (!participationCampaign) {
-      return;
-    }
-
-    if (participationCampaign.managementMode === 'HOST') {
-      const nextReservedQuantity = Number(participationQuantityDraft);
-      const totalPhysicalQuantity = Number(participationCampaign.totalPhysicalQuantity ?? 0);
-      const alreadySoldQuantity = Number(participationCampaign.alreadySoldQuantity ?? 0);
-
-      if (!Number.isInteger(nextReservedQuantity) || nextReservedQuantity < 0) {
-        setParticipationError('請輸入 0 以上的整數自留數量');
-        return;
-      }
-
-      const nextOpenQuantity = totalPhysicalQuantity - nextReservedQuantity;
-      if (nextOpenQuantity < alreadySoldQuantity) {
-        setParticipationError('自留數量過高，會小於目前已售出數量');
-        return;
-      }
-
-      setIsSubmittingParticipation(true);
-      setParticipationError('');
-
-      try {
-        await hostReviseCampaign(
-          participationCampaign.id,
-          {
-            newProductTotalQuantity: totalPhysicalQuantity,
-            newOpenQuantity: nextOpenQuantity,
-          },
-          token
-        );
-        handleCloseParticipation();
-        setRefreshKey((current) => current + 1);
-      } catch (error) {
-        setParticipationError(error.message);
-      } finally {
-        setIsSubmittingParticipation(false);
-      }
-
-      return;
-    }
-
-    const nextQuantity = Number(participationQuantityDraft);
-    const currentQuantity = Number(participationCampaign.quantity) || 0;
-
-    if (!Number.isInteger(nextQuantity) || nextQuantity <= 0) {
-      setParticipationError('請輸入大於 0 的整數數量');
-      return;
-    }
-
-    if (nextQuantity === currentQuantity) {
-      handleCloseParticipation();
-      return;
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      if (nextQuantity > currentQuantity) {
-        await joinCampaign(participationCampaign.id, { quantity: nextQuantity - currentQuantity }, token);
-      } else {
-        await reviseCampaign(participationCampaign.id, { quantity: currentQuantity - nextQuantity }, token);
-      }
-
-      handleCloseParticipation();
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setParticipationError(error.message);
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const handleWithdrawParticipation = async () => {
-    if (!participationCampaign) {
-      return;
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      await withdrawCampaign(participationCampaign.id, token);
-      handleCloseParticipation();
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setParticipationError(error.message);
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const handleCancelHostedCampaign = async () => {
-    if (!participationCampaign) {
-      return;
-    }
-
-    setIsSubmittingParticipation(true);
-    setParticipationError('');
-
-    try {
-      await cancelCampaign(participationCampaign.id, token);
-      handleCloseParticipation();
-      setRefreshKey((current) => current + 1);
-    } catch (error) {
-      setParticipationError(error.message);
-    } finally {
-      setIsSubmittingParticipation(false);
-    }
-  };
-
-  const dealViewModeScope = activeType === 'REQUEST' ? 'request' : isDesktopViewport ? (activeType === 'MINE' ? 'mine' : 'market') : 'mobile';
-  const defaultDealViewMode =
-    isDesktopViewport && activeType === 'MINE' && activeMyCampaignScope === 'ALL' ? 'compact' : 'card';
-  const dealViewMode = dealViewModePreferences[dealViewModeScope] || defaultDealViewMode;
-  const isCompactDealList = dealViewMode === 'compact';
-  const isMineCompactList = activeType === 'MINE' && isCompactDealList;
-
-  const handleChangeDealViewMode = (nextMode) => {
-    setDealViewModePreferences((current) => ({
-      ...current,
-      [dealViewModeScope]: nextMode,
-    }));
-    localStorage.setItem(DEAL_VIEW_MODE_KEYS[dealViewModeScope], nextMode);
-    setExpandedCompactDealId('');
-  };
-
-  const focusMobileSearch = () => {
-    window.setTimeout(() => mobileSearchInputRef.current?.focus(), 0);
-  };
-
-  const handleOpenMobileSearch = () => {
-    const isRequestScope = activeType === 'REQUEST';
-    searchReturnContextRef.current = {
-      activeType,
-      activeCampaignType,
-      scrollY: window.scrollY,
-    };
-    setMobileSearchScope(isRequestScope ? 'REQUEST' : 'CAMPAIGN');
-    if (!isRequestScope) {
-      setActiveCampaignType('ALL');
-      switchActiveType('CAMPAIGN');
-    }
-    setIsNavigationOpen(false);
-    setIsSearchExpanded(true);
-    window.scrollTo({ top: 0 });
-    focusMobileSearch();
-  };
-
-  const handleChangeMobileSearchScope = (nextScope) => {
-    setMobileSearchScope(nextScope);
-
-    if (nextScope === 'REQUEST') {
-      switchActiveType('REQUEST');
-    } else {
-      setActiveCampaignType('ALL');
-      switchActiveType('CAMPAIGN');
-    }
-
-    focusMobileSearch();
-  };
-
-  const handleCloseMobileSearch = () => {
-    const returnContext = searchReturnContextRef.current;
-    setIsSearchExpanded(false);
-    setIsNavigationOpen(false);
-    setSearch('');
-
-    if (returnContext?.activeType) {
-      setActiveType(returnContext.activeType);
-      if (returnContext.activeCampaignType) {
-        setActiveCampaignType(returnContext.activeCampaignType);
-      }
-    }
-
-    window.setTimeout(() => {
-      window.scrollTo({ top: returnContext?.scrollY ?? 0 });
-      searchReturnContextRef.current = null;
-    }, 0);
-  };
-
-  const renderFloatingDealViewControl = () => (
-    <div
-      className={isDealViewControlVisible ? 'floating-view-control' : 'floating-view-control hidden'}
-      aria-label="檢視模式"
-    >
-      <button
-        type="button"
-        className={dealViewMode === 'card' ? 'floating-view-button active' : 'floating-view-button'}
-        onClick={() => handleChangeDealViewMode('card')}
-        aria-pressed={dealViewMode === 'card'}
-        aria-label="卡片檢視"
-        title="卡片檢視"
-      >
-        <CardViewIcon />
-      </button>
-      <button
-        type="button"
-        className={dealViewMode === 'compact' ? 'floating-view-button active' : 'floating-view-button'}
-        onClick={() => handleChangeDealViewMode('compact')}
-        aria-pressed={dealViewMode === 'compact'}
-        aria-label="精簡檢視"
-        title="精簡檢視"
-      >
-        <CompactViewIcon />
-      </button>
-    </div>
-  );
 
   return (
-    <div
-      className={[
-        'app-shell',
-        isProxyRequestFormOpen || isProxyRequestModalOpen ? 'proxy-request-modal-open' : '',
-        isSearchExpanded ? 'mobile-search-mode' : '',
-        isSearchExpanded && !search.trim() ? 'search-empty' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
-    >
-      <div
-        className={`pull-refresh-indicator${isRefreshing ? ' refreshing' : ''}${pullDistance >= 60 ? ' ready' : ''}`}
-        style={{ height: isRefreshing ? 52 : pullDistance }}
-      >
-        <span>{isRefreshing ? '刷新中...' : pullDistance >= 60 ? '放開即可刷新' : '下拉刷新首頁'}</span>
-      </div>
-
-      <HomeTopBar
-        labels={LABELS}
-        token={token}
-        user={user}
-        stores={stores}
-        activeStoreIds={activeStoreIds}
-        chatUnreadRoomCount={chatUnreadRoomCount}
-        unreadCount={notifications.length}
-        onChangeStores={setActiveStoreIds}
-        onOpenProfile={openProfile}
-        onOpenChatRooms={handleOpenChatRooms}
-        onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onRefresh={refreshHome}
-        isRefreshing={isRefreshing}
-      />
-
-      {liveNotifications.length > 0 && (
-        <div className="live-notification-stack" aria-live="polite" aria-atomic="false">
-          {liveNotifications.map((notification) => (
-            <article
-              key={notification.toastKey}
-              className={`live-notification-card ${getLiveNotificationTone(notification)}`}
-            >
-              <button
-                type="button"
-                className="live-notification-card-body"
-                onClick={() => void handleLiveNotificationAction(notification)}
-              >
-                <strong>{notification.typeLabel}</strong>
-                <span>{notification.content}</span>
-              </button>
-              <button
-                type="button"
-                className="live-notification-card-close"
-                onClick={() => dismissLiveNotification(notification.toastKey)}
-                aria-label="關閉提示"
-                title="關閉"
-              >
-                ×
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
-
-      {successToast && (
-        <button
-          type="button"
-          className="live-notification-toast success-toast"
-          onClick={() => {
-            setSuccessToast(null);
-            if (successToastTimerRef.current) {
-              window.clearTimeout(successToastTimerRef.current);
-              successToastTimerRef.current = null;
-            }
-          }}
-        >
-          <strong>{successToast.title}</strong>
-          <span>{successToast.message}</span>
-        </button>
-      )}
-
+    <MainLayout
+      header={{
+        token,
+        user,
+        stores,
+        chatUnreadRoomCount,
+        notifications,
+        openProfile,
+        handleOpenChatRooms,
+        setIsNotificationsOpen
+      }}
+      feedback={{
+        liveNotifications,
+        handleLiveNotificationAction,
+        dismissLiveNotification,
+        successToast,
+        setSuccessToast,
+        successToastTimerRef
+      }}
+      navigation={{
+        isProxyRequestFormOpen,
+        isProxyRequestModalOpen,
+        isSearchExpanded,
+        search,
+        handleTouchStart,
+        handleTouchMove,
+        handleTouchEnd,
+        handleTouchCancel,
+        isRefreshing,
+        pullDistance,
+        activeStoreIds,
+        setActiveStoreIds,
+        refreshHome,
+        handleCloseMobileSearch,
+        mobileSearchInputRef,
+        setSearch,
+        focusMobileSearch,
+        mobileSearchScope,
+        handleChangeMobileSearchScope,
+        activeType,
+        pageTransitionDirection,
+        isChatFocusMode,
+        isDealViewControlVisible,
+        dealViewMode,
+        handleChangeDealViewMode,
+        isInquiryDetailOpen,
+        swipeTabs,
+        navigationRef,
+        isNavigationOpen,
+        switchActiveType,
+        handleOpenMobileSearch,
+        setIsSearchExpanded,
+        setIsNavigationOpen,
+        searchInputRef,
+        setIsProxyRequestFormOpen,
+        handleOpenCreateCampaignForCurrentType
+      }}
+      overlays={(<>
       <LoginModal
         labels={LABELS}
         isOpen={isLoginModalOpen}
@@ -4781,833 +2025,70 @@ function HomePage() {
         onClose={handleCloseReview}
         onSubmitted={handleReviewSubmitted}
       />
-
-      {isSearchExpanded && (
-        <section className="mobile-search-header" aria-label="搜尋合購與託購">
-          <div className="mobile-search-bar">
-            <button
-              type="button"
-              className="mobile-search-back"
-              aria-label="返回原本頁面"
-              onClick={handleCloseMobileSearch}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.4" />
-              </svg>
-            </button>
-            <div className="mobile-search-field">
-              <SearchIcon />
-              <input
-                ref={mobileSearchInputRef}
-                type="search"
-                aria-label="搜尋商品名稱、關鍵字或類別"
-                placeholder="搜尋商品名稱、關鍵字或類別"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              {search && (
-                <button
-                  type="button"
-                  className="mobile-search-clear"
-                  aria-label="清除搜尋文字"
-                  onClick={() => {
-                    setSearch('');
-                    focusMobileSearch();
-                  }}
-                >
-                  <span aria-hidden="true"></span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="mobile-search-scopes" role="tablist" aria-label="搜尋範圍">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mobileSearchScope === 'CAMPAIGN'}
-              className={mobileSearchScope === 'CAMPAIGN' ? 'active' : ''}
-              onClick={() => handleChangeMobileSearchScope('CAMPAIGN')}
-            >
-              合購
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mobileSearchScope === 'REQUEST'}
-              className={mobileSearchScope === 'REQUEST' ? 'active' : ''}
-              onClick={() => handleChangeMobileSearchScope('REQUEST')}
-            >
-              託購
-            </button>
-          </div>
-
-          {!search.trim() && (
-            <div className="mobile-search-start">
-              <SearchIcon />
-              <strong>開始搜尋</strong>
-              <p>輸入商品名稱、關鍵字或類別，尋找合購與託購內容。</p>
-            </div>
-          )}
-        </section>
-      )}
-
-      <main className="content">
-        <div key={activeType} className={`page-transition page-transition-${pageTransitionDirection}`}>
-        {activeType === 'REQUEST' ? (
-          <PurchaseRequestsPanel
-            token={token}
-            user={user}
-            keyword={deferredSearch}
-            viewMode={dealViewMode}
-            isCreateOpen={isProxyRequestFormOpen}
-            pageHeader={(
-              <div className="page-identity-heading compact has-action">
-                <div className="page-identity-copy">
-                  <h1>託購</h1>
-                  <p className="eyebrow">代買需求</p>
-                </div>
-                <button
-                  type="button"
-                  className="page-primary-action"
-                  onClick={() => setIsProxyRequestFormOpen(true)}
-                >
-                  <span aria-hidden="true">＋</span>
-                  委託
-                </button>
-              </div>
-            )}
-            onCreateOpenChange={setIsProxyRequestFormOpen}
-            onModalOpenChange={setIsProxyRequestModalOpen}
-            onRequireLogin={() => setIsLoginModalOpen(true)}
-            onShowToast={({ title, message }) => showSuccessToast(title, message)}
-            onOpenPurchaseChat={handleOpenPurchaseChat}
-          />
-        ) : activeType === 'INQUIRY' ? (
-          <InquiryPanel
-            token={token}
-            currentUser={user}
-            stores={stores}
-            activeStoreIds={activeStoreIds}
-            openInquiryId={inquiryTargetId}
-            onOpenInquiryHandled={() => setInquiryTargetId(null)}
-            onDetailViewChange={setIsInquiryDetailOpen}
-            onRequireLogin={() => setIsLoginModalOpen(true)}
-            onShowToast={({ title, message }) => showSuccessToast(title, message)}
-          />
-        ) : activeType === 'MINE' ? (
-          <section className="mine-page-header page-header-panel">
-            <div className="page-identity-heading compact">
-              <h1>我的</h1>
-              <p className="eyebrow">個人內容</p>
-            </div>
-            <div className="mine-domain-switch" role="tablist" aria-label="我的分類">
-              {localizedMineDomains.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={activeMineDomain === option.value ? 'active' : ''}
-                  role="tab"
-                  aria-selected={activeMineDomain === option.value}
-                  onClick={() => setActiveMineDomain(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <section className="campaign-page-header page-header-panel">
-            <div className="page-identity-heading compact has-action">
-              <div className="page-identity-copy">
-                <h1>合購</h1>
-                <p className="eyebrow">一起購買</p>
-              </div>
-              <button
-                type="button"
-                className="page-primary-action"
-                onClick={handleOpenCreateCampaignForCurrentType}
-              >
-                <span aria-hidden="true">＋</span>
-                開團
-              </button>
-            </div>
-            <div className="campaign-type-filter" role="tablist" aria-label="合購類型">
-              {campaignTypeOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeCampaignType === option.value}
-                  className={activeCampaignType === option.value ? 'active' : ''}
-                  onClick={() => setActiveCampaignType(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {activeType === 'REQUEST' || activeType === 'INQUIRY' ? null : activeType === 'REQUEST_DISABLED' ? (
-          <>
-            {isProxyRequestFormOpen && (
-              <div className="modal-backdrop" onClick={() => setIsProxyRequestFormOpen(false)}>
-                <div className="login-modal create-campaign-modal proxy-request-modal" onClick={(event) => event.stopPropagation()}>
-                  <div className="modal-top-row">
-                    <p className="eyebrow">託購建單</p>
-                    <button type="button" className="modal-close" onClick={() => setIsProxyRequestFormOpen(false)}>
-                      關閉
-                    </button>
-                  </div>
-                  <h2 className="modal-title">發起委託</h2>
-                  <form className="proxy-request-form" onSubmit={handleSubmitProxyPurchaseRequest}>
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>一</span>
-                <div>
-                  <h3>商品資訊</h3>
-                  <p>填寫想委託代購的商品內容。</p>
-                </div>
-              </div>
-
-              <label className="form-field">
-                <span>商品名稱 *</span>
-                <input type="text" name="productName" placeholder="例：好市多衛生紙" required />
-              </label>
-
-              <label className="form-field">
-                <span>商品分類 *</span>
-                <select name="category" required defaultValue="">
-                  <option value="" disabled>
-                    請選擇分類
-                  </option>
-                  <option value="fresh">生鮮</option>
-                  <option value="daily">日用品</option>
-                  <option value="drink">飲料</option>
-                  <option value="other">其他</option>
-                </select>
-              </label>
-
-              <label className="form-field">
-                <span>商品圖片（可選）</span>
-                <input type="file" name="images" accept="image/*" multiple />
-                <small>最多 1～3 張</small>
-              </label>
-
-              <label className="form-field">
-                <span>商品備註（可選）</span>
-                <textarea name="note" rows="3" placeholder="例：指定品牌 / 包裝 / 規格" />
-              </label>
-            </section>
-
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>二</span>
-                <div>
-                  <h3>報酬設定（幫買費）</h3>
-                  <p>設定代購者可取得的幫買報酬。</p>
-                </div>
-              </div>
-
-              <fieldset className="option-group">
-                <legend>幫買報酬方式 *</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="rewardMethod"
-                    value="fixed"
-                    checked={requestRewardMethod === 'fixed'}
-                    onChange={(event) => setRequestRewardMethod(event.target.value)}
-                  />
-                  固定報酬
-                </label>
-                {requestRewardMethod === 'fixed' && (
-                  <label className="form-field nested-field">
-                    <span>報酬金額 *</span>
-                    <input type="number" min="0" inputMode="numeric" placeholder="元" required />
-                  </label>
-                )}
-                <label>
-                  <input
-                    type="radio"
-                    name="rewardMethod"
-                    value="quote"
-                    checked={requestRewardMethod === 'quote'}
-                    onChange={(event) => setRequestRewardMethod(event.target.value)}
-                  />
-                  由代購者報價（可議價）
-                </label>
-                <p className="field-hint">商品費用由代購者先行支付，交貨時另行結算。</p>
-              </fieldset>
-            </section>
-
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>三</span>
-                <div>
-                  <h3>收貨方式</h3>
-                  <p>依選擇顯示對應資訊欄位。</p>
-                </div>
-              </div>
-
-              <fieldset className="option-group">
-                <legend>收貨方式 *</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="deliveryMethod"
-                    value="meetup"
-                    checked={requestDeliveryMethod === 'meetup'}
-                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
-                  />
-                  面交
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="deliveryMethod"
-                    value="store"
-                    checked={requestDeliveryMethod === 'store'}
-                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
-                  />
-                  店到店（超商）
-                </label>
-                {requestDeliveryMethod === 'store' && (
-                  <label className="form-field nested-field">
-                    <span>超商 / 門市資訊 *</span>
-                    <input type="text" placeholder="例：7-11 中和門市" required />
-                  </label>
-                )}
-                <label>
-                  <input
-                    type="radio"
-                    name="deliveryMethod"
-                    value="home"
-                    checked={requestDeliveryMethod === 'home'}
-                    onChange={(event) => setRequestDeliveryMethod(event.target.value)}
-                  />
-                  宅配
-                </label>
-                {requestDeliveryMethod === 'home' && (
-                  <label className="form-field nested-field">
-                    <span>收件地址 *</span>
-                    <textarea rows="3" placeholder="請輸入完整收件地址" required />
-                  </label>
-                )}
-              </fieldset>
-            </section>
-
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>四</span>
-                <div>
-                  <h3>交貨時間（代購完成時間）</h3>
-                  <p>設定希望代購完成的時間。</p>
-                </div>
-              </div>
-
-              <fieldset className="option-group">
-                <legend>交貨時間 *</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="completionTimeMode"
-                    value="specific"
-                    checked={requestCompletionTimeMode === 'specific'}
-                    onChange={(event) => setRequestCompletionTimeMode(event.target.value)}
-                  />
-                  指定時間
-                </label>
-                {requestCompletionTimeMode === 'specific' && (
-                  <label className="form-field nested-field">
-                    <span>日期 + 時間 *</span>
-                    <input type="datetime-local" required />
-                  </label>
-                )}
-                <label>
-                  <input
-                    type="radio"
-                    name="completionTimeMode"
-                    value="flexible"
-                    checked={requestCompletionTimeMode === 'flexible'}
-                    onChange={(event) => setRequestCompletionTimeMode(event.target.value)}
-                  />
-                  時間可協調
-                </label>
-              </fieldset>
-            </section>
-
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>五</span>
-                <div>
-                  <h3>委託期限（接單期限）</h3>
-                  <p>設定代購者可接單的期限。</p>
-                </div>
-              </div>
-
-              <fieldset className="option-group">
-                <legend>委託期限 *</legend>
-                <label>
-                  <input
-                    type="radio"
-                    name="deadlineMode"
-                    value="specific"
-                    checked={requestDeadlineMode === 'specific'}
-                    onChange={(event) => setRequestDeadlineMode(event.target.value)}
-                  />
-                  指定截止時間
-                </label>
-                {requestDeadlineMode === 'specific' && (
-                  <label className="form-field nested-field">
-                    <span>日期 + 時間 *</span>
-                    <input type="datetime-local" required />
-                  </label>
-                )}
-                <label>
-                  <input
-                    type="radio"
-                    name="deadlineMode"
-                    value="longTerm"
-                    checked={requestDeadlineMode === 'longTerm'}
-                    onChange={(event) => setRequestDeadlineMode(event.target.value)}
-                  />
-                  長期有效（直到有人接單）
-                </label>
-              </fieldset>
-            </section>
-
-            <section className="proxy-request-section">
-              <div className="proxy-request-section-title">
-                <span>六</span>
-                <div>
-                  <h3>進階條件（可選）</h3>
-                  <p>限制接單者條件。</p>
-                </div>
-              </div>
-
-              <label className="form-field">
-                <span>限制接單者條件（可選）</span>
-                <textarea rows="3" placeholder="例：信用分數 80 以上 / 有好市多會員 / 可今日交貨" />
-              </label>
-            </section>
-
-            <div className="proxy-request-submit-row">
-              {requestDraftMessage && <p className="status-message">{requestDraftMessage}</p>}
-              <button type="submit" className="create-button active">
-                發起委託
-              </button>
-            </div>
-                  </form>
-                </div>
-              </div>
-            )}
-          </>
-        ) : activeType === 'MINE' ? (
-          <div className="mine-filter-stack">
-            {activeMineDomain === 'CAMPAIGN' && (
-              <>
-                <section className="category-strip">
-                  {localizedMyCampaignScopes.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={activeMyCampaignScope === option.value ? 'category-button active' : 'category-button'}
-                      onClick={() => setActiveMyCampaignScope(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </section>
-                <section className="mine-status-inline-filter">
-                  <span className="mine-status-filter-label">狀態</span>
-                  <div className="mine-status-filter-options">
-                    {localizedMyCampaignOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={activeMyCampaignFilter === option.value ? 'status-filter-button active' : 'status-filter-button'}
-                        onClick={() => setActiveMyCampaignFilter(option.value)}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-                <label className="mine-status-filter">
-                  <span className="mine-status-filter-label">狀態</span>
-                  <select value={activeMyCampaignFilter} onChange={(event) => setActiveMyCampaignFilter(event.target.value)}>
-                    {localizedMyCampaignOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="market-filter-row">
-            <label className="category-select">
-            <span className="category-select-label">類別</span>
-            <select value={activeCategory} onChange={(event) => setActiveCategory(Number(event.target.value))}>
-              <option value={0}>{LABELS.all}</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.icon ? `${category.icon} ${category.name}` : category.name}
-                </option>
-              ))}
-            </select>
-            </label>
-            <label className="market-checkbox-filter">
-              <input
-                type="checkbox"
-                checked={hideFullCampaigns}
-                onChange={(event) => setHideFullCampaigns(event.target.checked)}
-              />
-              <span>隱藏已滿</span>
-            </label>
-            <label className="market-filter-hidden">
-              <span className="category-select-label">狀態</span>
-              <select value={activeMarketStatus} onChange={(event) => setActiveMarketStatus(event.target.value)}>
-                {MARKET_STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        )}
-
-        {activeType === 'MINE' && activeMineDomain === 'REQUEST' ? (
-          <PurchaseRequestsPanel
-            token={token}
-            user={user}
-            keyword={deferredSearch}
-            viewMode={dealViewMode}
-            isCreateOpen={false}
-            initialScope="MY_ALL"
-            scopeOptions={MY_PURCHASE_REQUEST_SCOPE_OPTIONS}
-            scopeControl="tabs"
-            onCreateOpenChange={() => {}}
-            onModalOpenChange={setIsProxyRequestModalOpen}
-            onRequireLogin={() => setIsLoginModalOpen(true)}
-            onShowToast={({ title, message }) => showSuccessToast(title, message)}
-            onOpenPurchaseChat={handleOpenPurchaseChat}
-          />
-        ) : activeType !== 'REQUEST' && activeType !== 'INQUIRY' && (
-          <>
-            <section
-              className={[
-                'deal-grid',
-                isCompactDealList ? 'compact-list-grid' : '',
-                isMineCompactList ? 'mine-compact-grid' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              {isReferenceLoading && <p className="state-message">{LABELS.referenceLoading}</p>}
-              {referenceError && <p className="inline-error">{referenceError}</p>}
-              {campaignError && <p className="inline-error">{campaignError}</p>}
-
-              {!isInitialLoading && campaigns.length === 0 && !campaignError && (
-                <p className="state-message empty-card">{LABELS.emptyDeals}</p>
-              )}
-
-              {campaigns.map((deal, index) => {
-                const dealViewKey = getDealViewKey(deal, index);
-                const isExpandedCompactDeal = isCompactDealList && expandedCompactDealId === dealViewKey;
-                const isHighlighted = String(deal.id) === String(focusedCampaignId);
-
-                if (isMineCompactList && !isExpandedCompactDeal) {
-                  return (
-                    <CompactMineDealRow
-                      key={dealViewKey}
-                      deal={deal}
-                      index={index}
-                      labels={uiLabels}
-                      isHighlighted={isHighlighted}
-                      onExpand={setExpandedCompactDealId}
-                      onOpenGallery={handleOpenGallery}
-                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
-                    />
-                  );
-                }
-
-                if (isCompactDealList && activeType !== 'MINE' && !isExpandedCompactDeal) {
-                  return (
-                    <CompactDealRow
-                      key={dealViewKey}
-                      deal={deal}
-                      index={index}
-                      labels={uiLabels}
-                      countdownNow={countdownNow}
-                      formatCountdown={formatCountdown}
-                      formatDateTime={formatDateTime}
-                      getScenarioLabel={getScenarioLabel}
-                      getTypeClass={getTypeClass}
-                      isHighlighted={isHighlighted}
-                      onExpand={setExpandedCompactDealId}
-                      onOpenGallery={handleOpenGallery}
-                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
-                    />
-                  );
-                }
-
-                return (
-                  <div key={dealViewKey} className={isCompactDealList ? 'mine-expanded-card' : undefined}>
-                    {isCompactDealList && (
-                      <div className="mine-expanded-card-actions">
-                        <button type="button" className="text-button" onClick={() => setExpandedCompactDealId('')}>
-                          收合
-                        </button>
-                      </div>
-                    )}
-                    <DealCard
-                      labels={uiLabels}
-                      deal={deal}
-                      countdownNow={countdownNow}
-                      formatCountdown={formatCountdown}
-                      formatDateTime={formatDateTime}
-                      getScenarioLabel={getScenarioLabel}
-                      getTypeClass={getTypeClass}
-                      onJoin={handleOpenJoinCampaign}
-                      onOpenGallery={handleOpenGallery}
-                      onOpenChat={activeType === 'MINE' && canOpenCampaignChat(deal) ? handleOpenChat : undefined}
-                      onOpenParticipation={activeType === 'MINE' ? handleOpenParticipation : undefined}
-                      onOpenUserProfile={(profileUser) => handleOpenUserProfile(profileUser, 'card')}
-                      onShare={shareCampaign}
-                      showJoinAction={activeType !== 'MINE' && !isSameUserId(deal.host?.id, user?.id)}
-                      isHighlighted={isHighlighted}
-                    />
-                  </div>
-                );
-              })}
-            </section>
-            <div ref={sentinelRef} className="list-sentinel">
-              {isInitialLoading || isLoadingMore ? LABELS.loadingMore : hasMore ? LABELS.loadingMore : LABELS.noMoreData}
-            </div>
-          </>
-        )}
-        </div>
-      </main>
-
-      {!isSearchExpanded && !isChatFocusMode && activeType !== 'INQUIRY' && renderFloatingDealViewControl()}
-      {!isSearchExpanded && !isChatFocusMode && !(activeType === 'INQUIRY' && isInquiryDetailOpen) && renderPageDots()}
-
-      {!isChatFocusMode && !(activeType === 'INQUIRY' && isInquiryDetailOpen) && <div ref={navigationRef} className="mobile-navigation-fab">
-        {isNavigationOpen && (
-          <div className="mobile-navigation-menu" id="mobile-navigation-menu" role="menu">
-            <button
-              type="button"
-              className={`mobile-navigation-item ${activeType === 'MINE' ? 'active' : ''}`}
-              role="menuitem"
-              aria-current={activeType === 'MINE' ? 'page' : undefined}
-              onClick={() => switchActiveType('MINE')}
-            >
-              <span className="mobile-navigation-item-icon"><MyDealsIcon /></span>
-              <span>我的</span>
-            </button>
-            <button
-              type="button"
-              className={`mobile-navigation-item ${activeType === 'INSTANT' || activeType === 'SCHEDULED' ? 'active' : ''}`}
-              role="menuitem"
-              aria-current={activeType === 'INSTANT' || activeType === 'SCHEDULED' ? 'page' : undefined}
-              onClick={() => switchActiveType('CAMPAIGN')}
-            >
-              <span className="mobile-navigation-item-icon"><CartHandshakeIcon /></span>
-              <span>合購</span>
-            </button>
-            <button
-              type="button"
-              className={`mobile-navigation-item ${activeType === 'REQUEST' ? 'active' : ''}`}
-              role="menuitem"
-              aria-current={activeType === 'REQUEST' ? 'page' : undefined}
-              onClick={() => switchActiveType('REQUEST')}
-            >
-              <span className="mobile-navigation-item-icon"><CartHandshakeIcon /></span>
-              <span>託購</span>
-            </button>
-            <button
-              type="button"
-              className={`mobile-navigation-item ${activeType === 'INQUIRY' ? 'active' : ''}`}
-              role="menuitem"
-              aria-current={activeType === 'INQUIRY' ? 'page' : undefined}
-              onClick={() => switchActiveType('INQUIRY')}
-            >
-              <span className="mobile-navigation-item-icon"><BulbIcon /></span>
-              <span>詢問</span>
-            </button>
-            <button
-              type="button"
-              className="mobile-navigation-item"
-              role="menuitem"
-              onClick={handleOpenMobileSearch}
-            >
-              <span className="mobile-navigation-item-icon"><SearchIcon /></span>
-              <span>搜尋</span>
-            </button>
-          </div>
-        )}
-
-        <div className="mobile-navigation-controls">
-          <button
-            type="button"
-            className={`mobile-navigation-trigger ${isNavigationOpen ? 'open' : ''}`}
-            aria-label={isNavigationOpen ? '收合導覽選單' : '展開導覽選單'}
-            aria-expanded={isNavigationOpen}
-            aria-controls="mobile-navigation-menu"
-            onClick={() => {
-              setIsSearchExpanded(false);
-              setIsNavigationOpen((current) => !current);
-            }}
-          >
-            {isNavigationOpen ? (
-              <span className="mobile-navigation-close-icon" aria-hidden="true"></span>
-            ) : (
-              <span className="mobile-navigation-grid-icon" aria-hidden="true">
-                <i></i><i></i><i></i><i></i>
-              </span>
-            )}
-          </button>
-        </div>
-      </div>}
-
-      <footer
-        className={[
-          'bottom-bar',
-          'desktop-bottom-bar',
-          isSearchExpanded ? 'search-expanded' : '',
-          activeType === 'REQUEST' ? 'request-mode' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-      >
-        <button
-          type="button"
-          className={activeType === 'MINE' ? 'create-button bottom-nav-button active' : 'create-button bottom-nav-button'}
-          onClick={() => switchActiveType('MINE')}
-          aria-label="我的團購"
-          title="我的團購"
-        >
-          我的
-        </button>
-        <label
-          className="search-box"
-          onClick={() => {
-            setIsSearchExpanded(true);
-            window.setTimeout(() => searchInputRef.current?.focus(), 0);
-          }}
-        >
-          <SearchIcon />
-          <span className="search-box-label">搜尋</span>
-          <input
-            ref={searchInputRef}
-            type="search"
-            placeholder={LABELS.searchPlaceholder}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onFocus={() => setIsSearchExpanded(true)}
-            onBlur={() => {
-              if (!search.trim()) {
-                setIsSearchExpanded(false);
-              }
-            }}
-          />
-        </label>
-        <button
-          type="button"
-          className={activeType === 'INQUIRY' ? 'create-button bottom-nav-button active' : 'create-button bottom-nav-button'}
-          onClick={() => switchActiveType('INQUIRY')}
-          aria-label="詢問區"
-          title="詢問區"
-        >
-          詢問
-        </button>
-        {activeType === 'MINE' ? (
-          <>
-            <button
-              type="button"
-              className="create-button bottom-nav-button"
-              onClick={() => switchActiveType('CAMPAIGN')}
-              aria-label="合購"
-              title="合購"
-            >
-              合購
-            </button>
-            <button
-              type="button"
-              className="create-button bottom-nav-button request-button"
-              onClick={() => switchActiveType('REQUEST')}
-              aria-label="託購"
-              title="託購"
-            >
-              託購
-            </button>
-          </>
-        ) : activeType === 'REQUEST' ? (
-          <>
-            <button
-              type="button"
-              className="create-button bottom-nav-button"
-              onClick={() => switchActiveType('CAMPAIGN')}
-              aria-label="合購"
-              title="合購"
-            >
-              合購
-            </button>
-            <button
-              type="button"
-              className="create-button request-button request-create-button active"
-              onClick={() => setIsProxyRequestFormOpen(true)}
-              aria-label="發起委託"
-              title="發起委託"
-            >
-              發起委託
-            </button>
-          </>
-        ) : activeType === 'INQUIRY' ? (
-          <>
-            <button
-              type="button"
-              className="create-button bottom-nav-button"
-              onClick={() => switchActiveType('CAMPAIGN')}
-            >
-              合購
-            </button>
-            <button
-              type="button"
-              className="create-button bottom-nav-button request-button"
-              onClick={() => switchActiveType('REQUEST')}
-            >
-              託購
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="create-button bottom-nav-button request-button"
-              onClick={() => switchActiveType('REQUEST')}
-              aria-label="託購"
-              title="託購"
-            >
-              託購
-            </button>
-            <button
-              type="button"
-              className="create-button active"
-              onClick={handleOpenCreateCampaignForCurrentType}
-            >
-              開團
-            </button>
-          </>
-        )}
-      </footer>
-    </div>
+      </>)}
+    >
+      <Outlet context={{
+        requests: {
+          token,
+          user,
+          deferredSearch,
+          dealViewMode,
+          isProxyRequestFormOpen,
+          setIsProxyRequestFormOpen,
+          setIsProxyRequestModalOpen,
+          setIsLoginModalOpen,
+          showSuccessToast,
+          handleOpenPurchaseChat,
+        },
+        inquiries: {
+          token,
+          user,
+          stores,
+          activeStoreIds,
+          inquiryTargetId,
+          setInquiryTargetId,
+          setIsInquiryDetailOpen,
+          setIsLoginModalOpen,
+          showSuccessToast,
+        },
+        mine: {
+          localizedMineDomains,
+          activeMineDomain,
+          setActiveMineDomain,
+          localizedMyCampaignScopes,
+          activeMyCampaignScope,
+          setActiveMyCampaignScope,
+          localizedMyCampaignOptions,
+          activeMyCampaignFilter,
+          setActiveMyCampaignFilter,
+          token,
+          user,
+          deferredSearch,
+          dealViewMode,
+          setIsProxyRequestModalOpen,
+          setIsLoginModalOpen,
+          showSuccessToast,
+          handleOpenPurchaseChat,
+          campaignListProps,
+        },
+        campaigns: {
+          handleOpenCreateCampaignForCurrentType,
+          campaignTypeOptions,
+          activeCampaignType,
+          setActiveCampaignType,
+          activeType,
+          legacyRequestFormProps,
+          activeCategory,
+          setActiveCategory,
+          categories,
+          hideFullCampaigns,
+          setHideFullCampaigns,
+          activeMarketStatus,
+          setActiveMarketStatus,
+          campaignListProps,
+        },
+      }} />
+    </MainLayout>
   );
 }
 

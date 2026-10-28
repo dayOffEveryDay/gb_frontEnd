@@ -9,6 +9,8 @@
     "build:local": "vite build --mode development --configLoader native",
     "build:prod": "vite build --mode production --configLoader native",
     "lint": "eslint .",
+    "test:pages": "node --experimental-vm-modules --test tests/page-controllers.test.mjs",
+    "test:routes": "node --experimental-vm-modules --test tests/routes.test.mjs",
     "preview": "vite preview --configLoader native"
   },
   "dependencies": {

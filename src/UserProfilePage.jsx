@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import './App.css';
-import { AvatarIcon, BulbIcon, ExpandIcon, MoreIcon, OpenCardIcon } from './Icons';
+import { AvatarIcon, BulbIcon, ExpandIcon, MoreIcon, OpenCardIcon } from './components/icons/Icons';
 import {
   AUTH_STORAGE_EVENT,
   blockUser,
@@ -20,7 +20,7 @@ import {
   updateCurrentUserProfile,
 } from './api';
 import { formatDateTime, getScenarioLabel, mapCampaign, parseLocalDateTime } from './homeUtils';
-import PurchaseDeliveryProfilesModal from './PurchaseDeliveryProfilesModal';
+import PurchaseDeliveryProfilesModal from './components/purchase/PurchaseDeliveryProfilesModal';
 
 const CAMPAIGN_STATUS_LABELS = {
   OPEN: '開放加入',
@@ -412,7 +412,7 @@ function UserProfilePage() {
       return;
     }
 
-    navigate('/', {
+    navigate('/mine', {
       state: {
         focusCampaignId: String(campaignId),
         source: 'credit-score-log',
@@ -425,9 +425,8 @@ function UserProfilePage() {
       return;
     }
 
-    navigate('/', {
+    navigate('/requests', {
       state: {
-        activeType: 'REQUEST',
         focusPurchaseRequestId: String(purchaseRequestId),
         source: 'credit-score-log',
       },
