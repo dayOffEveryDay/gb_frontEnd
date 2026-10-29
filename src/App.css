@@ -211,6 +211,27 @@
   white-space: nowrap;
 }
 
+.chat-room-copy .purchase-chat-readonly-label {
+  align-items: center;
+  gap: 4px;
+  background: #e8eef5;
+  color: #455c76;
+}
+
+[data-theme='dark'] .chat-room-copy .purchase-chat-readonly-label {
+  background: #293849;
+  color: #c0d0e2;
+}
+
+.chat-room-tab-unread {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--primary, #176b3a);
+  color: #fff;
+  font-size: 0.72rem;
+}
+
 .chat-status-row.purchase-chat-order-status {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

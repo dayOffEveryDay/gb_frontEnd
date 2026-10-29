@@ -1,4 +1,6 @@
 import usePageScroll from './layouts/usePageScroll';
+import { compareChatRooms } from './chatRoomSorting';
+import { prependNotification } from './notificationUpdates';
 import { mainPath } from './layouts/mainRoutes';
 import useReferenceData from './layouts/useReferenceData';
 import useCampaignGallery from './pages/mine/useCampaignGallery';
@@ -321,6 +323,8 @@ function HomePage() {
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
 
   const notificationClientRef = useRef(null);
+  const notificationRevisionRef = useRef(0);
+  const lastNotificationPushAtRef = useRef(0);
   const chatCampaignRef = useRef(null);
   const purchaseChatRoomRef = useRef(null);
   const liveNotificationTimersRef = useRef(new Map());
@@ -604,14 +608,15 @@ function HomePage() {
     setNotificationsError('');
     setReadNotificationsError('');
 
+    const notificationRevision = notificationRevisionRef.current;
     fetchUnreadNotifications(token)
       .then((data) => {
-        if (!cancelled) {
+        if (!cancelled && notificationRevision === notificationRevisionRef.current) {
           setNotifications(normalizeNotificationList(data));
         }
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!cancelled && notificationRevision === notificationRevisionRef.current) {
           setNotificationsError(error.message);
           setNotifications([]);
         }
@@ -646,6 +651,44 @@ function HomePage() {
   }, [token]);
 
   useEffect(() => {
+    if (!token) return undefined;
+    let disposed = false;
+    let inFlight = false;
+    const syncUnread = async () => {
+      // Give an in-progress answer transaction time to commit before reconciling.
+      if (document.hidden || inFlight || Date.now() - lastNotificationPushAtRef.current < 5000) return;
+      const revision = notificationRevisionRef.current;
+      inFlight = true;
+      try {
+        const data = await fetchUnreadNotifications(token);
+        if (!disposed && revision === notificationRevisionRef.current) {
+          const activeOrderId = purchaseChatRoomRef.current?.orderId;
+          setNotifications(normalizeNotificationList(data).filter((notification) =>
+            !(notification.type === 'PURCHASE_CHAT_MESSAGE' && activeOrderId != null &&
+              String(notification.referenceId) === String(activeOrderId))
+          ));
+          setNotificationsError('');
+        }
+      } catch {
+        // Keep the last known notifications during a temporary network failure.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const interval = window.setInterval(syncUnread, 30000);
+    window.addEventListener('focus', syncUnread);
+    document.addEventListener('visibilitychange', syncUnread);
+    window.addEventListener('notifications-reconnected', syncUnread);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', syncUnread);
+      document.removeEventListener('visibilitychange', syncUnread);
+      window.removeEventListener('notifications-reconnected', syncUnread);
+    };
+  }, [token]);
+
+  useEffect(() => {
     if (!token) {
       return undefined;
     }
@@ -669,9 +712,13 @@ function HomePage() {
           reconnectDelay: 5000,
           debug: () => {},
           onConnect: () => {
+            window.dispatchEvent(new Event('notifications-reconnected'));
             client.subscribe('/user/queue/notifications', (frame) => {
               try {
+                if (disposed) return;
                 const incomingNotification = normalizeNotification(JSON.parse(frame.body));
+                notificationRevisionRef.current += 1;
+                lastNotificationPushAtRef.current = Date.now();
                 const activePurchaseOrderId = purchaseChatRoomRef.current?.orderId;
                 const isActivePurchaseChatMessage =
                   incomingNotification.type === 'PURCHASE_CHAT_MESSAGE' &&
@@ -684,37 +731,15 @@ function HomePage() {
                   }
 
                   if (!isActivePurchaseChatMessage) {
+                    setNotifications((current) => prependNotification(current, incomingNotification));
+                    setNotificationsError('');
                     pushLiveNotification(incomingNotification);
                   }
                 }
 
-                fetchUnreadNotifications(token)
-                  .then((data) => {
-                    if (!disposed) {
-                      const nextNotifications = normalizeNotificationList(data);
-                      const activeChatNotificationIds = nextNotifications
-                        .filter(
-                          (notification) =>
-                            notification.type === 'PURCHASE_CHAT_MESSAGE' &&
-                            activePurchaseOrderId != null &&
-                            String(notification.referenceId) === String(activePurchaseOrderId) &&
-                            notification.id != null
-                        )
-                        .map((notification) => notification.id);
-                      setNotifications(
-                        nextNotifications.filter((notification) => !activeChatNotificationIds.includes(notification.id))
-                      );
-                      if (activeChatNotificationIds.length > 0) {
-                        void Promise.all(activeChatNotificationIds.map((notificationId) => markNotificationRead(notificationId, token))).catch(() => {});
-                      }
-                      setNotificationsError('');
-                    }
-                  })
-                  .catch((error) => {
-                    if (!disposed) {
-                      setNotificationsError(error.message);
-                    }
-                  });
+                if (isActivePurchaseChatMessage && incomingNotification.id != null) {
+                  void markNotificationRead(incomingNotification.id, token).catch(() => {});
+                }
               } catch {
                 setNotificationsError('通知資料解析失敗');
               }
@@ -944,6 +969,7 @@ function HomePage() {
 
   const hidePurchaseChatNotifications = useCallback((orderId) => {
     if (orderId == null) return;
+    notificationRevisionRef.current += 1;
     setNotifications((current) =>
       current.filter(
         (notification) =>
@@ -965,6 +991,7 @@ function HomePage() {
 
     try {
       await markNotificationRead(notificationId, token);
+      notificationRevisionRef.current += 1;
       const notificationToMove =
         sourceNotification ?? notifications.find((notification) => notification.id === notificationId) ?? null;
       setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
@@ -1129,7 +1156,7 @@ function HomePage() {
       );
       setChatRooms(
         [...purchaseRooms, ...campaignRooms].sort(
-          (first, second) => getCombinedChatRoomSortTime(second) - getCombinedChatRoomSortTime(first)
+          (first, second) => compareChatRooms(first, second, getCombinedChatRoomSortTime)
         )
       );
       if (!silent && hasSourceError) {

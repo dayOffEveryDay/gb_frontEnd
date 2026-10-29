@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { getChatRoomUnreadCount, isChatRoomEnded, isChatRoomReadOnly } from '../../chatRoomSorting';
+
 function formatChatRoomTime(value) {
   if (!value) {
     return '';
@@ -55,7 +58,7 @@ function getRoomView(room) {
       unreadCount: Number(room.unreadCount ?? room.unreadMessageCount ?? 0),
       time: room.lastMessage?.createdAt ?? room.updatedAt ?? '',
       preview: room.lastMessage?.content ?? '',
-      readOnly: Boolean(room.readOnly),
+      readOnly: isChatRoomReadOnly(room),
     };
   }
 
@@ -68,14 +71,17 @@ function getRoomView(room) {
     unreadCount: Number(room.unreadMessageCount ?? 0),
     time: getCampaignRoomTime(room),
     preview: '',
-    readOnly: (room?.chatAccess ?? room?.chat_access ?? '').toString().toUpperCase() === 'READ_ONLY',
+    readOnly: isChatRoomReadOnly(room),
   };
 }
 
-function ChatRoomsModal({ labels, isOpen, chatRooms, isLoading, error, onClose, onOpenChat }) {
-  if (!isOpen) {
-    return null;
-  }
+function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpenChat }) {
+  const [activeTab, setActiveTab] = useState('active');
+  const tabs = [
+    { key: 'active', label: '進行中', rooms: chatRooms.filter((room) => !isChatRoomEnded(room)) },
+    { key: 'ended', label: '已結束', rooms: chatRooms.filter(isChatRoomEnded) },
+  ];
+  const visibleRooms = tabs.find((tab) => tab.key === activeTab).rooms;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -89,12 +95,26 @@ function ChatRoomsModal({ labels, isOpen, chatRooms, isLoading, error, onClose, 
 
         <p className="chat-room-intro">你建立或參與的團購與託購聊天室會集中顯示在這裡。</p>
 
-        <div className="chat-room-list">
+        <div className="notification-tabs" role="tablist" aria-label="聊天室交易狀態">
+          {tabs.map((tab) => {
+            const unread = tab.rooms.reduce((total, room) => total + getChatRoomUnreadCount(room), 0);
+            return <button key={tab.key} type="button" role="tab"
+              id={`chat-tab-${tab.key}`} aria-selected={activeTab === tab.key}
+              aria-controls="chat-room-panel"
+              className={`notification-tab${activeTab === tab.key ? ' active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}>
+              {tab.label}
+              {unread > 0 && <span className="chat-room-tab-unread" aria-label={`${unread} 則未讀`}>{unread > 99 ? '99+' : unread}</span>}
+            </button>;
+          })}
+        </div>
+
+        <div className="chat-room-list" id="chat-room-panel" role="tabpanel" aria-labelledby={`chat-tab-${activeTab}`}>
           {isLoading && <p className="muted-copy">載入聊天室中...</p>}
           {!isLoading && error && <p className="inline-error">{error}</p>}
-          {!isLoading && chatRooms.length === 0 && !error && <p className="muted-copy">目前沒有可開啟的聊天室。</p>}
+          {!isLoading && visibleRooms.length === 0 && !error && <p className="muted-copy">{activeTab === 'active' ? '目前沒有進行中的聊天室。' : '目前沒有已結束的聊天室。'}</p>}
           {!isLoading &&
-            chatRooms.map((room) => {
+            visibleRooms.map((room) => {
               const view = getRoomView(room);
               const timeLabel = formatChatRoomTime(view.time);
               const hasUnread = view.unreadCount > 0;
@@ -121,7 +141,7 @@ function ChatRoomsModal({ labels, isOpen, chatRooms, isLoading, error, onClose, 
                     <span>{view.subtitle}</span>
                     {view.preview && <span className="purchase-chat-room-preview">{view.preview}</span>}
                     {timeLabel && <time>{timeLabel}</time>}
-                    {view.readOnly && <span className="purchase-chat-readonly-label">唯讀</span>}
+                    {view.readOnly && <span className="purchase-chat-readonly-label"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>唯讀</span>}
                   </div>
                   <button
                     type="button"
@@ -139,4 +159,6 @@ function ChatRoomsModal({ labels, isOpen, chatRooms, isLoading, error, onClose, 
   );
 }
 
-export default ChatRoomsModal;
+export default function ChatRoomsModal(props) {
+  return props.isOpen ? <ChatRoomsContent {...props} /> : null;
+}
