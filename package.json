@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test:pages": "node --experimental-vm-modules --test tests/page-controllers.test.mjs",
     "test:routes": "node --experimental-vm-modules --test tests/routes.test.mjs",
+    "test:shared": "node --experimental-vm-modules --test tests/shared-controllers.test.mjs",
     "preview": "vite preview --configLoader native"
   },
   "dependencies": {
