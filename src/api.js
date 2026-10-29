@@ -831,9 +831,10 @@ export function fetchPurchaseChatUnreadCount(token) {
   });
 }
 
-export function markPurchaseChatRoomRead(roomId, token) {
+export function markPurchaseChatRoomRead(roomId, lastReadMessageId, token) {
   return request(`/api/v1/purchase-chat-rooms/${roomId}/read`, {
     method: 'POST',
+    body: { lastReadMessageId },
     token,
   });
 }
@@ -1081,3 +1082,11 @@ export {
   getLineCallbackUrl,
   LINE_LOGIN_SUCCESS_MESSAGE,
 };
+
+export function markCampaignChatRead(campaignId, lastReadMessageId, token) {
+  return request(`/api/v1/campaigns/${campaignId}/chat-messages/read`, {
+    method: 'POST',
+    body: { lastReadMessageId },
+    token,
+  });
+}

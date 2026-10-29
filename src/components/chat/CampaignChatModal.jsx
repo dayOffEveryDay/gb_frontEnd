@@ -1,3 +1,4 @@
+import useRenderedChatRead from '../../features/chat/useRenderedChatRead';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import { fetchCampaignChatMessages, getBackendBaseUrl, uploadChatImages } from '../../api';
@@ -156,6 +157,7 @@ function parseChatMessageContent(content, explicitImageUrls = []) {
 
 function normalizeChatMessage(message) {
   return {
+    messageId: message.messageId ?? message.id ?? null,
     type: message.type ?? message.messageType ?? message.message_type ?? '',
     senderId: message.senderId ?? message.sender_id ?? null,
     senderName: message.senderName ?? message.sender_name ?? '未知使用者',
@@ -234,6 +236,7 @@ function CampaignChatModal({
   onClose,
 }) {
   const [messages, setMessages] = useState(null);
+  const loadedRoomRef = useRef(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -336,19 +339,15 @@ function CampaignChatModal({
     }
 
     let cancelled = false;
+    loadedRoomRef.current = null;
+    setMessages(null);
 
     fetchCampaignChatMessages(campaignId, token)
       .then((data) => {
         if (!cancelled) {
           const normalizedMessages = Array.isArray(data) ? data.map(normalizeChatMessage) : [];
+          loadedRoomRef.current = campaignId;
           setMessages(normalizedMessages);
-
-          const latestMessage = normalizedMessages[normalizedMessages.length - 1];
-          if (latestMessage?.timestamp) {
-            onMarkRead?.(campaignId, latestMessage.timestamp);
-          } else {
-            onMarkRead?.(campaignId);
-          }
         }
       })
       .catch((nextError) => {
@@ -426,7 +425,6 @@ function CampaignChatModal({
 
                 const nextMessage = normalizeChatMessage(payload);
                 setMessages((current) => [...(current ?? []), nextMessage]);
-                onMarkRead?.(campaignId, nextMessage.timestamp);
               } catch {
                 setError('聊天室訊息格式錯誤');
               }
@@ -463,11 +461,7 @@ function CampaignChatModal({
     };
   }, [campaignId, campaignStatus, chatAccess, isOpen, isReadOnly, onCampaignStatusChange, onMarkRead, token, wsUrl]);
 
-  useEffect(() => {
-    if (bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
-  }, [messages]);
+  useRenderedChatRead({ isOpen, roomId: campaignId, loadedRoomRef, messages, token, bodyRef, acknowledge: onMarkRead, onError: setError });
 
   useEffect(() => {
     if (

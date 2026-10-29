@@ -743,6 +743,7 @@ function HomePage() {
       />
 
       <ChatRoomsModal
+        key={user?.id ?? 'guest'}
         labels={LABELS}
         isOpen={isChatRoomsOpen}
         chatRooms={chatRooms}

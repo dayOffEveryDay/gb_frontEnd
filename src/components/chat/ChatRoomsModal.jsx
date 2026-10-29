@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import useChatRoomListView from '../../features/chat/useChatRoomListView';
 import { getChatRoomUnreadCount, isChatRoomEnded, isChatRoomReadOnly } from '../../chatRoomSorting';
 
 function formatChatRoomTime(value) {
@@ -75,8 +75,8 @@ function getRoomView(room) {
   };
 }
 
-function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpenChat }) {
-  const [activeTab, setActiveTab] = useState('active');
+function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpenChat, listView }) {
+  const { activeTab, changeTab, panelRef, rememberScroll } = listView;
   const tabs = [
     { key: 'active', label: '進行中', rooms: chatRooms.filter((room) => !isChatRoomEnded(room)) },
     { key: 'ended', label: '已結束', rooms: chatRooms.filter(isChatRoomEnded) },
@@ -85,7 +85,7 @@ function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpen
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="login-modal chat-room-modal" onClick={(event) => event.stopPropagation()}>
+      <div ref={panelRef} className="login-modal chat-room-modal" onScroll={rememberScroll} onClick={(event) => event.stopPropagation()}>
         <div className="modal-top-row">
           <h2 className="modal-title notification-title">聊天室</h2>
           <button type="button" className="modal-close" onClick={onClose}>
@@ -102,7 +102,7 @@ function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpen
               id={`chat-tab-${tab.key}`} aria-selected={activeTab === tab.key}
               aria-controls="chat-room-panel"
               className={`notification-tab${activeTab === tab.key ? ' active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}>
+              onClick={() => changeTab(tab.key)}>
               {tab.label}
               {unread > 0 && <span className="chat-room-tab-unread" aria-label={`${unread} 則未讀`}>{unread > 99 ? '99+' : unread}</span>}
             </button>;
@@ -146,7 +146,10 @@ function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpen
                   <button
                     type="button"
                     className={hasUnread ? 'text-button chat-room-open-button has-unread' : 'text-button chat-room-open-button'}
-                    onClick={() => onOpenChat(room)}
+                    onClick={() => {
+                      rememberScroll();
+                      onOpenChat(room);
+                    }}
                   >
                     開啟
                   </button>
@@ -160,5 +163,6 @@ function ChatRoomsContent({ labels, chatRooms, isLoading, error, onClose, onOpen
 }
 
 export default function ChatRoomsModal(props) {
-  return props.isOpen ? <ChatRoomsContent {...props} /> : null;
+  const listView = useChatRoomListView(props);
+  return props.isOpen ? <ChatRoomsContent {...props} listView={listView} /> : null;
 }

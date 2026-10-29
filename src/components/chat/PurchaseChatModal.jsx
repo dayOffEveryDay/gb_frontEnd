@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import useRenderedChatRead from '../../features/chat/useRenderedChatRead';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import {
   confirmPurchaseOrderAsRequester,
@@ -84,6 +85,7 @@ function getOrderAvailableActions(order) {
 
 function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrder, onClose }) {
   const [messages, setMessages] = useState(null);
+  const loadedRoomRef = useRef(null);
   const [order, setOrder] = useState(null);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
@@ -130,6 +132,7 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
     if (!isOpen || !token || orderId == null || roomId == null) return undefined;
 
     let cancelled = false;
+    loadedRoomRef.current = null;
     setMessages(null);
     setOrder(null);
     setError('');
@@ -139,13 +142,12 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
     Promise.all([
       fetchPurchaseOrderMessages(orderId, token),
       fetchPurchaseOrder(orderId, token).catch(() => null),
-      markPurchaseChatRoomRead(roomId, token),
     ])
       .then(([data, orderData]) => {
         if (cancelled) return;
+        loadedRoomRef.current = roomId;
         setMessages(Array.isArray(data) ? data.map(normalizeMessage) : []);
         setOrder(orderData);
-        onRead?.(roomId);
       })
       .catch((nextError) => {
         if (!cancelled) {
@@ -181,8 +183,6 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
               try {
                 const payload = JSON.parse(frame.body);
                 setMessages((current) => mergeMessage(current ?? [], payload));
-                void markPurchaseChatRoomRead(roomId, token).catch(() => {});
-                onRead?.(roomId);
               } catch {
                 setError('即時訊息格式錯誤');
               }
@@ -205,12 +205,11 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
     };
   }, [isOpen, onRead, roomId, token, wsUrl]);
 
-  useEffect(() => {
-    const frameId = requestAnimationFrame(() => {
-      if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frameId);
-  }, [messages]);
+  const acknowledgeRead = useCallback(async (id, lastId, isCurrent) => {
+    await markPurchaseChatRoomRead(id, lastId, token);
+    if (isCurrent()) await onRead?.(id);
+  }, [token, onRead]);
+  useRenderedChatRead({ isOpen, roomId: roomId, loadedRoomRef, messages, token, bodyRef, acknowledge: acknowledgeRead, onError: setError });
 
   if (!isOpen || !room) return null;
 
@@ -221,8 +220,6 @@ function PurchaseChatModal({ isOpen, room, token, currentUser, onRead, onOpenOrd
     try {
       const response = await sendPurchaseChatRoomMessage(roomId, { messageType, content }, token);
       setMessages((current) => mergeMessage(current ?? [], response));
-      await markPurchaseChatRoomRead(roomId, token);
-      onRead?.(roomId);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '訊息傳送失敗');
     } finally {

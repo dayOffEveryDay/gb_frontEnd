@@ -42,7 +42,10 @@ export async function mountController(file, initialProps = {}, apiOverrides = {}
     setInterval(fn) { const id = ++nextTimer; timers.set(id, fn); return id; },
     clearInterval: id => timers.delete(id),
   };
-  const document = { ...eventTarget(), hidden: false };
+  const document = { ...eventTarget(), hidden: false, visibilityState: 'visible' };
+  const frames = new Map();
+  const requestAnimationFrame = fn => { const id = ++nextTimer; frames.set(id, fn); return id; };
+  const cancelAnimationFrame = id => frames.delete(id);
   const api = {
     AUTH_STORAGE_EVENT: 'auth-change', AUTH_EXPIRED_MESSAGE: 'expired', LINE_LOGIN_SUCCESS_MESSAGE: 'line-login-success',
     getStoredToken: () => auth.token, getStoredUser: () => auth.user,
@@ -56,6 +59,7 @@ export async function mountController(file, initialProps = {}, apiOverrides = {}
     fetchMyParticipation: async () => ({ chatAccess: 'FULL' }), fetchCampaignChatMessages: async () => [],
     fetchHostDashboard: async () => ({}),
     fetchUnreadNotifications: async () => [], fetchReadNotifications: async () => [],
+    markCampaignChatRead: async () => ({ unreadCount: 0 }),
     markNotificationRead: async () => {}, markPurchaseChatRoomRead: async () => {},
     ...apiOverrides,
   };
@@ -88,6 +92,7 @@ export async function mountController(file, initialProps = {}, apiOverrides = {}
       });
     },
   };
+  react.useLayoutEffect = react.useEffect;
   class Client {
     constructor(config) { this.config = config; this.subscriptions = new Map(); clients.push(this); }
     activate() { this.config.onConnect(); }
@@ -95,7 +100,7 @@ export async function mountController(file, initialProps = {}, apiOverrides = {}
     deactivate() { this.deactivated = true; }
     push(path, payload) { this.subscriptions.get(path)?.({ body: JSON.stringify(payload) }); }
   }
-  const context = vm.createContext({ window, document, localStorage: storageApi, sessionStorage: storageApi, URL, Event });
+  const context = vm.createContext({ window, document, localStorage: storageApi, sessionStorage: storageApi, URL, Event, requestAnimationFrame, cancelAnimationFrame });
   function synthetic(key, exports) {
     if (!modules.has(key)) modules.set(key, new vm.SyntheticModule(Object.keys(exports), function () {
       for (const [name, val] of Object.entries(exports)) this.setExport(name, val);
@@ -139,6 +144,7 @@ export async function mountController(file, initialProps = {}, apiOverrides = {}
   render();
   return {
     get value() { return value; }, get auth() { return auth; }, window, document, clients, timers, storage,
+    async paint() { const callbacks = [...frames.values()]; frames.clear(); await Promise.all(callbacks.map(fn => fn())); },
     update(next = {}) { props = { ...props, ...next }; render(); },
     async settle() { for (let i = 0; i < 4; i++) { await setImmediate(); render(); } },
     unmount() { slots.forEach(slot => slot?.cleanup?.()); },

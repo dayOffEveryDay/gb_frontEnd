@@ -1,7 +1,7 @@
 import useSessionTask from '../useSessionTask';
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { getStoredChatRoomLastReads, normalizeReadTimestamp, setStoredChatRoomLastReads, CHAT_ROOM_PAGE_SIZE, buildOpenChatRooms, mapWithConcurrency, getNormalizedCampaignId, getCampaignChatAccess, canListCampaignChatRoom, countUnreadChatMessages, normalizePurchaseChatRoom, getCombinedChatRoomSortTime, CHAT_ROOMS_LOAD_ERROR_MESSAGE } from '../../homeHelpers';
-import { fetchMyHostedCampaigns, fetchMyJoinedCampaigns, fetchPurchaseChatRooms, fetchPurchaseChatUnreadCount, AUTH_EXPIRED_MESSAGE, fetchMyParticipation, fetchCampaignChatMessages } from '../../api';
+import { CHAT_ROOM_PAGE_SIZE, buildOpenChatRooms, mapWithConcurrency, getNormalizedCampaignId, getCampaignChatAccess, canListCampaignChatRoom, normalizePurchaseChatRoom, getCombinedChatRoomSortTime, CHAT_ROOMS_LOAD_ERROR_MESSAGE } from '../../homeHelpers';
+import { fetchMyHostedCampaigns, fetchMyJoinedCampaigns, fetchPurchaseChatRooms, fetchPurchaseChatUnreadCount, AUTH_EXPIRED_MESSAGE, fetchMyParticipation, markCampaignChatRead } from '../../api';
 import { compareChatRooms } from '../../chatRoomSorting';
 
 export default function useChatRooms({
@@ -43,7 +43,6 @@ export default function useChatRooms({
 
   const purchaseChatRoomRef = useRef(null);
 
-  const chatRoomsRef = useRef(chatRooms);
 
   const isChatFocusMode = isChatRoomsOpen || Boolean(chatCampaign) || Boolean(purchaseChatRoom);
 
@@ -58,9 +57,6 @@ export default function useChatRooms({
     [chatRooms, purchaseChatUnreadTotal]
   );
 
-  useEffect(() => {
-    chatRoomsRef.current = chatRooms;
-  }, [chatRooms]);
 
   useEffect(() => {
     chatCampaignRef.current = chatCampaign;
@@ -70,58 +66,23 @@ export default function useChatRooms({
     purchaseChatRoomRef.current = purchaseChatRoom;
   }, [purchaseChatRoom]);
 
-  const markChatRoomAsRead = useCallback(
-    (campaignId, readAt = new Date().toISOString()) => {
-      if (!user?.id || campaignId == null) {
-        return;
-      }
-
-      const currentReads = getStoredChatRoomLastReads(user.id);
-      const roomKey = String(campaignId);
-      const nextReadAt = normalizeReadTimestamp(currentReads[roomKey], readAt);
-
-      if (currentReads[roomKey] === nextReadAt) {
-        return;
-      }
-
-      setStoredChatRoomLastReads(user.id, {
-        ...currentReads,
-        [roomKey]: nextReadAt,
-      });
-
-      setChatRooms((current) =>
-        current.map((room) =>
-          room?.roomType !== 'PURCHASE' && Number(room?.id ?? room?.campaignId) === Number(campaignId)
-            ? {
-              ...room,
-              unreadMessageCount: 0,
-            }
-            : room
-        )
-      );
-    },
-    [user?.id]
-  );
-
-  const markPurchaseRoomAsRead = useCallback((roomId) => {
-    const room = chatRoomsRef.current.find(
-      (item) => item?.roomType === 'PURCHASE' && String(item.id) === String(roomId)
-    );
-    const readCount = Number(room?.unreadCount ?? room?.unreadMessageCount ?? 0);
-    chatRoomsRef.current = chatRoomsRef.current.map(item =>
-      item === room ? { ...item, unreadCount: 0, unreadMessageCount: 0 } : item
-    );
-    if (readCount > 0) {
-      setPurchaseChatUnreadTotal((current) => Math.max(0, current - readCount));
-    }
-    setChatRooms((current) =>
-      current.map((room) =>
-        room?.roomType === 'PURCHASE' && String(room.id) === String(roomId)
-          ? { ...room, unreadCount: 0, unreadMessageCount: 0 }
-          : room
-      )
-    );
-  }, []);
+  const readRevisions = useRef(new Map());
+  const readResults = useRef(new Map());
+  const markChatRoomAsRead = useCallback(async (campaignId, lastReadMessageId) => {
+    if (!token || campaignId == null || lastReadMessageId == null) return;
+    const isCurrent = beginSessionTask();
+    const key = String(campaignId);
+    const revision = (readRevisions.current.get(key) ?? 0) + 1;
+    readRevisions.current.set(key, revision);
+    const result = await markCampaignChatRead(campaignId, lastReadMessageId, token);
+    if (!isCurrent() || readRevisions.current.get(key) !== revision) return;
+    readResults.current.set(key, { unreadCount: result.unreadCount });
+    setChatRooms(current => current.map(room =>
+      room?.roomType !== 'PURCHASE' && String(room?.id ?? room?.campaignId) === key
+        ? { ...room, unreadCount: result.unreadCount, unreadMessageCount: result.unreadCount }
+        : room
+    ));
+  }, [token, beginSessionTask]);
 
   const loadOpenChatRooms = useCallback(async ({ silent = false } = {}) => {
     if (!token) {
@@ -134,6 +95,7 @@ export default function useChatRooms({
 
     const isSessionCurrent = beginSessionTask();
     const revision = ++loadRevision.current;
+    const readsAtStart = new Map(readResults.current);
     const isCurrent = () => isSessionCurrent() && revision === loadRevision.current;
     if (!silent) {
       setIsChatRoomsLoading(true);
@@ -193,34 +155,13 @@ export default function useChatRooms({
       });
       if (!isCurrent()) return;
       const openRooms = accessResults.filter(Boolean).filter(canListCampaignChatRoom);
-      const roomsWithUnreadCounts = await mapWithConcurrency(openRooms, 4, async (room) => {
-        const roomId = getNormalizedCampaignId(room);
-
-        if (roomId == null) {
-          return {
-            ...room,
-            unreadMessageCount: 0,
-          };
-        }
-
-        try {
-          const messages = await fetchCampaignChatMessages(roomId, token);
-          const lastReadAt = getStoredChatRoomLastReads(user?.id)[String(roomId)];
-
-          return {
-            ...room,
-            unreadMessageCount: countUnreadChatMessages(messages, user?.id, lastReadAt),
-          };
-        } catch {
-          return {
-            ...room,
-            unreadMessageCount: 0,
-          };
-        }
+      const campaignRooms = openRooms.map(room => {
+        const key = String(getNormalizedCampaignId(room));
+        const completedRead = readResults.current.get(key);
+        const unreadCount = completedRead && completedRead !== readsAtStart.get(key)
+          ? completedRead.unreadCount : Number(room.unreadCount ?? 0);
+        return { ...room, roomType: 'CAMPAIGN', unreadCount, unreadMessageCount: unreadCount };
       });
-
-      if (!isCurrent()) return;
-      const campaignRooms = roomsWithUnreadCounts.map((room) => ({ ...room, roomType: 'CAMPAIGN' }));
       const purchaseRooms = (Array.isArray(purchaseData) ? purchaseData : []).map(normalizePurchaseChatRoom);
       setPurchaseChatUnreadTotal(
         Number(
@@ -251,7 +192,7 @@ export default function useChatRooms({
         setIsChatRoomsLoading(false);
       }
     }
-  }, [token, user?.id, setAuthError, setIsLoginModalOpen, beginSessionTask]);
+  }, [token, setAuthError, setIsLoginModalOpen, beginSessionTask]);
 
   useEffect(() => {
     if (!token) {
@@ -260,6 +201,29 @@ export default function useChatRooms({
 
     void loadOpenChatRooms({ silent: true });
   }, [loadOpenChatRooms, refreshKey, token]);
+
+  // The purchase read endpoint returns 204, not a remaining count. Reconcile
+  // with the server instead of clearing messages newer than the submitted ID.
+  const markPurchaseRoomAsRead = useCallback(() => loadOpenChatRooms({ silent: true }), [loadOpenChatRooms]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    let syncing = false;
+    const sync = async () => {
+      if (document.hidden || syncing) return;
+      syncing = true;
+      try { await loadOpenChatRooms({ silent: true }); }
+      finally { syncing = false; }
+    };
+    const timer = window.setInterval(sync, 30000);
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', sync);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [token, loadOpenChatRooms]);
 
   const handleOpenChatRooms = () => {
     if (!token) {
@@ -272,6 +236,8 @@ export default function useChatRooms({
   };
 
   useEffect(() => {
+    readResults.current.clear();
+    readRevisions.current.clear();
     setIsChatRoomsOpen(false);
     setChatCampaign(null);
     setPurchaseChatRoom(null);

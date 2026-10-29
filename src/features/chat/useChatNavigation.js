@@ -1,11 +1,10 @@
 import useSessionTask from '../useSessionTask';
-import { markPurchaseChatRoomRead, fetchPurchaseChatRooms, fetchMyParticipation } from '../../api';
+import { fetchPurchaseChatRooms, fetchMyParticipation } from '../../api';
 import { CHAT_ROOM_UNAVAILABLE_MESSAGE, normalizePurchaseChatRoom, hasUsableCampaignId, getNormalizedCampaignId, getCampaignChatAccess, canOpenCampaignChat } from '../../homeHelpers';
 
 export default function useChatNavigation({
   setChatRoomsError,
   token,
-  markPurchaseRoomAsRead,
   hidePurchaseChatNotifications,
   chatReturnContextRef,
   setPurchaseChatRoom,
@@ -17,7 +16,6 @@ export default function useChatNavigation({
   setCampaignError,
   refreshMineCampaignsBeforeOpen,
   markCampaignChatNotificationsAsRead,
-  markChatRoomAsRead,
   setChatCampaign,
   handleOpenParticipation,
   participationCampaign,
@@ -36,9 +34,6 @@ export default function useChatNavigation({
 
     if (room?.roomType === 'PURCHASE') {
       try {
-        await markPurchaseChatRoomRead(room.id, token);
-        if (!isCurrent()) return false;
-        markPurchaseRoomAsRead(room.id);
         hidePurchaseChatNotifications(room.orderId);
         chatReturnContextRef.current = { type: 'CHAT_ROOMS' };
         setPurchaseChatRoom(room);
@@ -114,9 +109,6 @@ export default function useChatNavigation({
         return false;
       }
 
-      await markPurchaseChatRoomRead(nextRoom.id, token);
-      if (!isCurrent()) return false;
-      markPurchaseRoomAsRead(nextRoom.id);
       hidePurchaseChatNotifications(nextRoom.orderId);
       chatReturnContextRef.current = returnContext;
       setPurchaseChatRoom(nextRoom);
@@ -171,7 +163,6 @@ export default function useChatNavigation({
 
     await markCampaignChatNotificationsAsRead(campaignId);
     if (!isCurrent()) return false;
-    markChatRoomAsRead(campaignId);
     chatReturnContextRef.current = returnContext;
     setChatCampaign(nextDeal);
     return true;

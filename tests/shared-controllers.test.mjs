@@ -9,6 +9,147 @@ const chatProps = () => ({
 });
 const notifyProps = () => ({ token: 'a', userId: 1, purchaseChatRoomRef: { current: null }, handleChatAccessRevoked: noop });
 
+test('read cursor is sent after render, skips hidden pages and never uses invalid or synthetic IDs', async () => {
+  const reads = [];
+  const hook = await mountController('src/features/chat/useRenderedChatRead.js', {
+    token: 'a', isOpen: true, roomId: 7, loadedRoomRef: { current: 7 },
+    bodyRef: { current: { scrollTop: 0, scrollHeight: 200 } },
+    messages: [{ messageId: 3 }, { messageId: 8 }, { messageId: -2 }, { messageId: 1.5 }, { content: 'system' }],
+    acknowledge: async (room, id) => reads.push([room, id]), onError: noop,
+  });
+  assert.equal(reads.length, 0);
+  hook.document.visibilityState = 'hidden';
+  await hook.paint(); assert.equal(reads.length, 0);
+  hook.document.visibilityState = 'visible';
+  hook.document.dispatchEvent({ type: 'visibilitychange' });
+  await hook.paint(); assert.deepEqual(reads, [[7, 8]]);
+  hook.document.dispatchEvent({ type: 'visibilitychange' });
+  await hook.paint(); assert.equal(reads.length, 1);
+  hook.update({ messages: [{ messageId: 9 }], isOpen: false });
+  await hook.paint(); assert.equal(reads.length, 1);
+  hook.unmount(); assert.equal(hook.document.listenerCount(), 0);
+});
+
+test('a read callback for a closed room cannot refresh another account after its API completes', async () => {
+  const pending = deferred(); let updated = false;
+  const hook = await mountController('src/features/chat/useRenderedChatRead.js', {
+    token: 'a', isOpen: true, roomId: 7, loadedRoomRef: { current: 7 },
+    bodyRef: { current: { scrollTop: 0, scrollHeight: 200 } }, messages: [{ id: 4 }],
+    acknowledge: async (_room, _id, isCurrent) => { await pending.promise; if (isCurrent()) updated = true; }, onError: noop,
+  });
+  const painting = hook.paint();
+  hook.update({ token: '', isOpen: false });
+  pending.resolve(); await painting;
+  assert.equal(updated, false); hook.unmount();
+});
+
+test('returning to the window syncs campaign reads made on another device', async () => {
+  let unreadCount = 3;
+  const hook = await mountController('src/features/chat/useChatRooms.js', chatProps(), {
+    fetchMyHostedCampaigns: async () => [{ id: 7, unreadCount }],
+    fetchMyParticipation: async () => ({ chatAccess: 'READ_WRITE' }),
+  });
+  await hook.settle(); assert.equal(hook.value.chatUnreadRoomCount, 1);
+  unreadCount = 0;
+  hook.window.dispatchEvent({ type: 'focus' });
+  await hook.settle(); assert.equal(hook.value.chatUnreadRoomCount, 0);
+  hook.unmount(); assert.equal(hook.window.listenerCount(), 0);
+  assert.equal(hook.document.listenerCount(), 0); assert.equal(hook.timers.size, 0);
+});
+
+test('chat list retains ended tab and its scroll after a chat closes and the list reloads', async () => {
+  const hook = await mountController('src/features/chat/useChatRoomListView.js', { isOpen: false, isLoading: false });
+  const panel = { scrollTop: 0 };
+  hook.value.panelRef.current = panel;
+  hook.update({ isOpen: true });
+  panel.scrollTop = 50;
+  hook.value.changeTab('ended'); hook.update();
+  assert.equal(panel.scrollTop, 0);
+  panel.scrollTop = 320; hook.value.rememberScroll();
+  hook.update({ isOpen: false });
+  panel.scrollTop = 0;
+  hook.update({ isOpen: true, isLoading: true });
+  hook.value.rememberScroll(); // Shrinking to a loading indicator must not overwrite the saved position.
+  hook.update({ isLoading: false });
+  assert.equal(hook.value.activeTab, 'ended');
+  assert.equal(panel.scrollTop, 320);
+  hook.value.changeTab('active'); hook.update();
+  assert.equal(panel.scrollTop, 50);
+  hook.value.changeTab('ended'); hook.update();
+  assert.equal(panel.scrollTop, 320);
+  hook.unmount();
+});
+
+test('campaign counts come from the server and survive login without browser read storage', async () => {
+  let unreadCount = 2;
+  const reads = [];
+  const api = {
+    fetchMyHostedCampaigns: async () => [{ id: 7, status: 'FULL', unreadCount }],
+    fetchMyParticipation: async () => ({ chatAccess: 'READ_WRITE' }),
+    fetchCampaignChatMessages: async () => { throw new Error('list must not download messages'); },
+    markCampaignChatRead: async (...args) => { reads.push(args); unreadCount = 0; return { unreadCount }; },
+  };
+  const first = await mountController('src/features/chat/useChatRooms.js', chatProps(), api);
+  await first.settle();
+  assert.equal(first.value.chatRooms[0].unreadMessageCount, 2);
+  await first.value.markChatRoomAsRead(7, 25); first.update();
+  assert.deepEqual(reads, [[7, 25, 'a']]);
+  assert.equal(first.value.chatUnreadRoomCount, 0);
+  assert.equal(first.storage.size, 0);
+  first.unmount();
+  const login = await mountController('src/features/chat/useChatRooms.js', { ...chatProps(), token: 'new-login' }, api);
+  await login.settle();
+  assert.equal(login.value.chatUnreadRoomCount, 0);
+  unreadCount = 1;
+  await login.value.loadOpenChatRooms(); login.update();
+  assert.equal(login.value.chatUnreadRoomCount, 1);
+  login.unmount();
+});
+
+test('a completed read is preserved when an older room list finishes loading', async () => {
+  const pending = deferred(); let calls = 0;
+  const hook = await mountController('src/features/chat/useChatRooms.js', chatProps(), {
+    fetchMyHostedCampaigns: () => ++calls === 1 ? Promise.resolve([{ id: 7, unreadCount: 2 }]) : pending.promise,
+    fetchMyParticipation: async () => ({ chatAccess: 'READ_ONLY' }),
+    markCampaignChatRead: async () => ({ unreadCount: 1 }),
+  });
+  await hook.settle();
+  const loading = hook.value.loadOpenChatRooms();
+  await hook.value.markChatRoomAsRead(7, 25); hook.update();
+  pending.resolve([{ id: 7, unreadCount: 2 }, { id: 8, unreadCount: 3 }]);
+  await loading; await hook.settle();
+  assert.equal(hook.value.chatRooms.find(room => room.id === 7).unreadMessageCount, 1);
+  assert.equal(hook.value.chatRooms.find(room => room.id === 8).unreadMessageCount, 3);
+  hook.unmount();
+});
+
+test('failed or out-of-order read responses cannot clear newer unread counts', async () => {
+  const pending = deferred();
+  const hook = await mountController('src/features/chat/useChatRooms.js', chatProps(), {
+    fetchMyHostedCampaigns: async () => [{ id: 7, unreadCount: 3 }],
+    fetchMyParticipation: async () => ({ chatAccess: 'READ_WRITE' }),
+    markCampaignChatRead: (_room, id) => id === 20 ? pending.promise : Promise.resolve({ unreadCount: 1 }),
+  });
+  await hook.settle();
+  const older = hook.value.markChatRoomAsRead(7, 20);
+  await hook.value.markChatRoomAsRead(7, 25); hook.update();
+  pending.resolve({ unreadCount: 3 }); await older; hook.update();
+  assert.equal(hook.value.chatRooms[0].unreadMessageCount, 1);
+  hook.unmount();
+});
+
+test('failed campaign read leaves unread count intact', async () => {
+  const hook = await mountController('src/features/chat/useChatRooms.js', chatProps(), {
+    fetchMyHostedCampaigns: async () => [{ id: 7, unreadCount: 3 }],
+    fetchMyParticipation: async () => ({ chatAccess: 'READ_WRITE' }),
+    markCampaignChatRead: async () => { throw new Error('offline'); },
+  });
+  await hook.settle();
+  await assert.rejects(hook.value.markChatRoomAsRead(7, 25), /offline/); hook.update();
+  assert.equal(hook.value.chatRooms[0].unreadMessageCount, 3);
+  hook.unmount();
+});
+
 test('logout while saving a profile cannot restore the old user or token', async () => {
   const pending = deferred();
   const hook = await mountController('src/features/account/useAccount.js', {
@@ -51,7 +192,7 @@ test('late chat loads cannot repopulate rooms after logout', async () => {
   hook.unmount();
 });
 
-test('latest chat refresh wins and duplicate read callbacks only decrement once', async () => {
+test('latest chat refresh wins and purchase read callbacks retain the server remaining count', async () => {
   const pending = deferred(); let calls = 0;
   const hook = await mountController('src/features/chat/useChatRooms.js', chatProps(), {
     fetchPurchaseChatRooms: () => ++calls === 1 ? pending.promise : Promise.resolve([{ id: 3, orderId: 4, unreadCount: 2 }]),
@@ -60,8 +201,8 @@ test('latest chat refresh wins and duplicate read callbacks only decrement once'
   await hook.value.loadOpenChatRooms(); await hook.settle();
   pending.resolve([{ id: 99 }]); await hook.settle();
   assert.equal(hook.value.chatRooms[0].id, 3);
-  hook.value.markPurchaseRoomAsRead(3); hook.value.markPurchaseRoomAsRead(3); hook.update();
-  assert.equal(hook.value.chatUnreadRoomCount, 3);
+  await Promise.all([hook.value.markPurchaseRoomAsRead(3), hook.value.markPurchaseRoomAsRead(3)]); hook.update();
+  assert.equal(hook.value.chatUnreadRoomCount, 5);
   hook.value.setChatCampaign({ id: 5 }); hook.update();
   hook.update({ token: 'refreshed-same-user' });
   assert.equal(hook.value.chatCampaign.id, 5, 'token refresh must not close the active room');
@@ -138,12 +279,13 @@ function navigationProps() {
 
 test('purchase chat returns to notifications or the chat list, and an old open request cannot reopen after logout', async () => {
   const props = navigationProps(), events = [], pending = deferred();
+  let roomLoads = 0;
   props.setIsNotificationsOpen = open => events.push(['notifications', open]);
   props.setIsChatRoomsOpen = open => events.push(['rooms', open]);
   props.setPurchaseChatRoom = room => events.push(['purchase', room?.id ?? null]);
   const hook = await mountController('src/features/chat/useChatNavigation.js', props, {
-    fetchPurchaseChatRooms: async () => [{ id: 3, orderId: 4 }],
-    markPurchaseChatRoomRead: id => id === 99 ? pending.promise : Promise.resolve(),
+    fetchPurchaseChatRooms: () => ++roomLoads === 1 ? Promise.resolve([{ id: 3, orderId: 4 }]) : pending.promise,
+    markPurchaseChatRoomRead: () => { throw new Error("opening must not acknowledge unseen messages"); },
   });
   assert.equal(await hook.value.handleOpenPurchaseChat({ orderId: 4 }, { returnContext: { type: 'NOTIFICATIONS' } }), true);
   hook.value.handleClosePurchaseChat();
@@ -151,9 +293,9 @@ test('purchase chat returns to notifications or the chat list, and an old open r
   await hook.value.handleOpenChatRoom({ roomType: 'PURCHASE', id: 3, orderId: 4 });
   hook.value.handleClosePurchaseChat();
   assert.deepEqual(events.at(-1), ['rooms', true]);
-  const opening = hook.value.handleOpenChatRoom({ roomType: 'PURCHASE', id: 99 });
+  const opening = hook.value.handleOpenPurchaseChat({ chatRoomId: 99 });
   hook.update({ token: '' }); const count = events.length;
-  pending.resolve(); await opening;
+  pending.resolve([{ id: 99 }]); await opening;
   assert.equal(events.length, count);
   hook.unmount();
 });
