@@ -34,7 +34,7 @@
 | `/requests` | 託購 |
 | `/inquiries` | 發問 |
 
-`/` 以 replace 導向 `/campaigns`；帶有舊版 `activeType` 或 `focusCampaignId` 的入口會轉至對應頁並保留其他 state。`/campaigns/:campaignId`、`/share/campaigns/:campaignId`、`/inquiries/new`、`/inquiries/:inquiryId` 與個人頁沿用原路由。
+`/` 以 replace 導向 `/campaigns`；帶有舊版 `activeType` 或 `focusCampaignId` 的入口會轉至對應頁並保留其他 state。`/campaigns/:campaignId`、`/share/campaigns/:campaignId`、`/inquiries/new` 與個人頁沿用原路由。詢問詳情使用 `/inquiries/qid=5`，保留共用主版型，並相容 `/inquiries/5` 舊網址；直接進入、重新整理及上一頁／下一頁皆由路由決定問題。
 
 目前分頁以 URL 為唯一來源，導覽和滑動都使用 React Router。上一頁／下一頁也會更新選取項目和轉場方向。`useSessionPreference` 在同一瀏覽器分頁保存搜尋、門市與各頁篩選，重新整理仍保留；不保存表單、聊天或 API 資料。`usePageScroll` 記錄各網址的捲動位置，資料呈現後嘗試還原；使用者主動操作或 5 秒後停止等待。明確的通知／團購定位優先於一般捲動還原。
 

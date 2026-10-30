@@ -107,18 +107,24 @@ function NewInquiry({ token, stores, embedded = false, onBack, onCreated, onRequ
 }
 
 export function InquiryPanel({ token, stores, activeStoreIds = [], currentUser, openInquiryId, onOpenInquiryHandled, onDetailViewChange, onRequireLogin, onShowToast }) {
+  const navigate = useNavigate();
+  const { inquiryId } = useParams();
+  // 以網址決定目前問題，同時相容 qid=5 與舊版純數字路徑。
+  const selectedId = inquiryId?.replace(/^qid=/, '') ?? null;
   const [view, setView] = useState('list');
-  const [selectedId, setSelectedId] = useState(null);
-  const open = useCallback((id) => { setSelectedId(id); setView('detail'); onDetailViewChange?.(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }, [onDetailViewChange]);
-  const back = () => { setSelectedId(null); setView('list'); onDetailViewChange?.(false); };
-  useEffect(() => () => onDetailViewChange?.(false), [onDetailViewChange]);
+  const open = useCallback((id) => { setView('list'); navigate(`/inquiries/qid=${encodeURIComponent(id)}`); window.scrollTo({ top: 0, behavior: 'smooth' }); }, [navigate]);
+  const back = () => { setView('list'); navigate('/inquiries'); };
+  useEffect(() => {
+    onDetailViewChange?.(selectedId !== null);
+    return () => onDetailViewChange?.(false);
+  }, [selectedId, onDetailViewChange]);
   useEffect(() => {
     if (openInquiryId == null) return;
     open(openInquiryId);
     onOpenInquiryHandled?.();
   }, [onOpenInquiryHandled, open, openInquiryId]);
+  if (selectedId !== null) return <Detail key={selectedId} token={token} stores={stores} inquiryId={selectedId} embedded onBack={back} onRequireLogin={onRequireLogin} onShowToast={onShowToast} currentUser={currentUser} />;
   if (view === 'new') return <NewInquiry token={token} stores={stores} embedded onBack={back} onCreated={(id) => id ? open(id) : back()} onRequireLogin={onRequireLogin} onShowToast={onShowToast} />;
-  if (view === 'detail') return <Detail token={token} stores={stores} inquiryId={selectedId} embedded onBack={back} onRequireLogin={onRequireLogin} onShowToast={onShowToast} currentUser={currentUser} />;
   return <InquiryList token={token} stores={stores} activeStoreIds={activeStoreIds} embedded onOpen={open} onCreate={() => setView('new')} onRequireLogin={onRequireLogin} />;
 }
 

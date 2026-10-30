@@ -23,6 +23,7 @@ export default function AppRoutes() {
         <Route path="campaigns" element={<CampaignsPage />} />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="inquiries" element={<InquiriesPage />} />
+        <Route path="inquiries/:inquiryId" element={<InquiriesPage />} />
       </Route>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/login/callback" element={<LineCallbackPage />} />
@@ -33,7 +34,6 @@ export default function AppRoutes() {
       <Route path="/campaigns/:campaignId" element={<ShareCampaignPage />} />
       <Route path="/share/campaigns/:campaignId" element={<ShareCampaignPage />} />
       <Route path="/inquiries/new" element={<InquiryPage />} />
-      <Route path="/inquiries/:inquiryId" element={<InquiryPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

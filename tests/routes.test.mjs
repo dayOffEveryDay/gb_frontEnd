@@ -17,6 +17,8 @@ test('canonical paths, legacy aliases, root entries and transition direction', (
     assert.equal(pageType(`${path}/`), type);
   }
   assert.equal(mainPath('INSTANT'), '/campaigns');
+  assert.equal(pageType('/inquiries/qid=5'), 'INQUIRY');
+  assert.equal(pageType('/inquiries/5'), 'INQUIRY');
   assert.equal(homeRedirect(null), '/campaigns');
   assert.equal(homeRedirect({ activeType: 'REQUEST' }), '/requests');
   assert.equal(homeRedirect({ focusCampaignId: 7 }), '/mine');
@@ -124,10 +126,25 @@ test('actual nested routes render directly and preserve browser history state', 
     assert.equal((html.match(/class="app-shell/g) ?? []).length, 1);
   }
   const router = createMemoryRouter(createRoutesFromChildren(AppRoutes().props.children), { initialEntries: ['/mine'] });
+  // 新舊問題網址都應直接顯示詳情，並保留共用主版型。
+  for (const path of ['/inquiries/qid=5', '/inquiries/5']) {
+    const html = renderToString(React.createElement(MemoryRouter, { initialEntries: [path] }, React.createElement(AppRoutes)));
+    assert.ok(html.includes('載入問題中…'), `direct detail entry ${path}`);
+    assert.equal((html.match(/class="app-shell/g) ?? []).length, 1);
+  }
   const layoutId = router.state.matches[0].route.id;
   await router.navigate('/requests', { state: { focusPurchaseRequestId: '42' } });
   assert.equal(router.state.matches[0].route.id, layoutId);
   await router.navigate('/inquiries');
+  await router.navigate('/inquiries/qid=5');
+  assert.equal(router.state.matches[0].route.id, layoutId);
+  assert.equal(router.state.matches.at(-1).params.inquiryId, 'qid=5');
+  assert.equal(router.state.errors, null);
+  await router.navigate(-1);
+  assert.equal(router.state.location.pathname, '/inquiries');
+  await router.navigate(1);
+  assert.equal(router.state.location.pathname, '/inquiries/qid=5');
+  await router.navigate(-1);
   await router.navigate(-1);
   assert.equal(router.state.location.pathname, '/requests');
   assert.equal(router.state.location.state.focusPurchaseRequestId, '42');
@@ -135,7 +152,9 @@ test('actual nested routes render directly and preserve browser history state', 
   assert.equal(router.state.location.pathname, '/mine');
   await router.navigate(1);
   assert.equal(router.state.location.pathname, '/requests');
-  for (const path of ['/campaigns/7', '/share/campaigns/7', '/inquiries/new', '/inquiries/7', '/users/7']) {
+  await router.navigate('/inquiries/7');
+  assert.equal(router.state.matches[0].route.id, layoutId);
+  for (const path of ['/campaigns/7', '/share/campaigns/7', '/inquiries/new', '/users/7']) {
     await router.navigate(path);
     assert.notEqual(router.state.matches[0].route.id, layoutId, `preserved detail route ${path}`);
     assert.equal(router.state.errors, null);
